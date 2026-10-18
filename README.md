@@ -1,38 +1,56 @@
 # DayByDay
 
-DayByDay 是一款 Windows 桌面日程助手。当前版本包含可拖动、可缩放的柔和风格悬浮窗，以及本地保存的每日待办和单次临时日程。
+DayByDay 是一款 Windows 桌面日程助手。当前版本包含可拖动、可缩放的悬浮窗、本地每日待办和临时日程，以及按教学周重复计算的学期课程和周视图。
 
-## 启动应用
+## 启动
 
-请在 Windows PowerShell 中打开项目文件夹 `D:\DAYBYDAY`，然后运行：
+在 Windows PowerShell 中打开项目目录并运行：
 
 ```powershell
+Set-Location D:\DAYBYDAY
 npm start
 ```
 
-第一次启动前如果项目依赖尚未安装，在该文件夹运行 `npm install`。应用会在本地打开 Electron 窗口，不需要账号或云端服务。
+不需要登录或连接云端。首次安装依赖时才需要在项目目录执行 `npm install`。
 
-## 当前功能
+## 第一次设置学期
 
-- 用日期两侧的箭头、Today 按钮或日期选择器切换日期。
-- 在 Schedule 中新增、编辑和删除单次日程，支持全天、时间、地点和备注。
-- 在 My to-do list 中快速添加待办，也可以编辑标题、日期和备注，完成、恢复、删除及调整顺序。
-- 删除操作会先显示确认提示；增删改会自动保存。
-- 课程表、截图识别和重复日程尚未加入。
+1. 点击顶部 **Semester Planner**。
+2. 点击 **新建学期**，填写名称、学期起止日期和“第一教学周星期一”。
+3. 第一教学周必须与学期开始日期处于同一周。例如学期从 2026-09-01（星期二）开始，可将第一教学周星期一设为 2026-08-31。
+4. 勾选“设为当前学期”，保存后，该学期的课程会进入每日及周视图。多个学期可保存在列表中，任意时刻只会有一个当前学期。
 
-## 本地数据
+## 录入课程
 
-SQLite 文件名为 `daybyday.sqlite`，存放在 Electron 的 `app.getPath('userData')` 应用专属目录中。在 Windows 上通常是：
+在 Semester Planner 点击 **新增课程**，填写课程名、星期、开始和结束时间、周次范围、重复方式，以及可选的教室、教师和备注。
+
+- 每周、单周和双周按“第一教学周星期一”计算，不依据自然年周数。
+- 指定周次可勾选不连续周，例如第 1、3、8、12 周。
+- 课程只保存一条重复规则；查看日程时按所查日期范围即时展开。
+- 日视图中的课程按钮可调整这一次的日期、时间和教室，或取消这一次；原课程发生日期用于追踪例外，跨周移动也不会显示两条。
+- Semester Planner 编辑的是整个课程系列。保存时可选择保留仍匹配新规则的单次例外，或清除全部例外；删除课程系列需要两次确认。
+- 课程时间冲突目前只并列展示，不阻止保存。
+
+## 日视图与周视图
+
+- 顶部 **Day** 展示选中日期的课程、临时日程和待办。
+- 顶部 **Week** 展示周一至周日的日期与安排标记；点击日期后，下方显示当天详细安排。上一周、下一周和 Today 可快速切换。
+- **Semester Planner** 管理学期及课程。
+- 临时日程和课程按时间排列，全天临时日程放在最上方。待办仍按日期单独保存。
+
+## 本地数据库与备份
+
+SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上通常为：
 
 ```text
 %APPDATA%\DayByDay\daybyday.sqlite
 ```
 
-窗口的位置和大小仍保存在同一应用数据目录下的 `window-state.json`。这两项都不写入项目源代码目录。迁移只升级数据库结构；遇到不支持的数据库版本时会报错，不会清空数据库。
+数据库迁移版本 2 在原有 `tasks` 和 `events` 表上新增 `semesters`、`courses`、`course_custom_weeks` 和 `course_exceptions`，不会重建或清空待办与临时日程。课程实例不会复制进 `events` 表。
 
-需要备份时，先关闭应用，再复制整个 `%APPDATA%\DayByDay` 文件夹到安全位置。不要删除该目录来排查问题。
+需要备份时，先关闭应用，再复制整个 `%APPDATA%\DayByDay` 文件夹到安全位置。不要删除该目录来排查问题；遇到数据库版本或初始化错误时，程序保留原文件并提示错误。
 
-## 开发检查
+## 检查
 
 在项目目录运行：
 
@@ -40,12 +58,13 @@ SQLite 文件名为 `daybyday.sqlite`，存放在 Electron 的 `app.getPath('use
 npm run typecheck
 npm run lint
 npm test
+npm run package
 ```
 
-`npm test` 使用 Node 自带的测试运行器，对临时测试数据库检查待办和日程的增删改查、日期隔离、排序、校验及迁移保护；测试文件写入系统临时目录并在测试后清理。`npm run package` 用于生成本地打包目录；Windows 安装程序制作计划在后续阶段验证。
+自动化测试对系统临时目录中的独立数据库执行，会在测试结束后清理；不会访问正式用户数据库。`npm run package` 生成打包目录；Windows 安装程序制作仍需单独验证。
 
 ## 安全设计
 
-Electron 窗口保持 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 里逐项列出的 API 请求主进程读写数据库；主进程会再次检查来源和输入，页面不接触 SQLite 或任意 SQL。
+Electron 窗口使用 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 中逐项列出的 API 请求主进程访问数据库；主进程会再次检查 IPC 来源和参数，页面不能运行 SQL。
 
-SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。当前 Forge 配置跳过对该模块的源码重建；切换到没有对应预编译文件的平台或架构时，需要重新评估 Electron 兼容性和原生构建工具。
+SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。Vite 将原生模块留在主进程包外，避免从生成目录寻找 `.node` 文件。暂未实现课程截图 OCR、云同步或账号系统。

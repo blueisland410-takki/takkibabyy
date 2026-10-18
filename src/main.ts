@@ -14,9 +14,13 @@ import type { MoveDirection } from './domain';
 import {
   assertDateKey,
   assertId,
+  parseCourseExceptionInput,
+  parseCourseInput,
   parseEventInput,
   parseEventUpdate,
   parseMoveDirection,
+  parseSeriesExceptionPolicy,
+  parseSemesterInput,
   parseTaskInput,
   parseTaskUpdate,
 } from './validation';
@@ -221,6 +225,9 @@ const registerWindowControls = () => {
     return {
       tasks: database.listTasks(date),
       events: database.listEvents(date),
+      courses: database.listCourseOccurrences(date, date),
+      semester: database.getCurrentSemester(),
+      teachingWeek: database.getTeachingWeek(date),
     };
   });
   ipcMain.handle('task:create', (event, input: unknown) => {
@@ -267,6 +274,64 @@ const registerWindowControls = () => {
     assertId(id);
     getPlannerDatabase().deleteEvent(id);
   });
+
+  ipcMain.handle('semester:list', (event) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().listSemesters();
+  });
+  ipcMain.handle('semester:create', (event, input: unknown) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().createSemester(parseSemesterInput(input));
+  });
+  ipcMain.handle('semester:update', (event, id: unknown, input: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    return getPlannerDatabase().updateSemester(id, parseSemesterInput(input));
+  });
+  ipcMain.handle('semester:set-current', (event, id: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    return getPlannerDatabase().setCurrentSemester(id);
+  });
+  ipcMain.handle('course:list', (event, semesterId: unknown) => {
+    getTrustedWindow(event);
+    assertId(semesterId);
+    return getPlannerDatabase().listCourses(semesterId);
+  });
+  ipcMain.handle('course:create', (event, input: unknown) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().createCourse(parseCourseInput(input));
+  });
+  ipcMain.handle(
+    'course:update-series',
+    (event, id: unknown, input: unknown, exceptionPolicy: unknown) => {
+      getTrustedWindow(event);
+      assertId(id);
+      return getPlannerDatabase().updateCourseSeries(
+        id,
+        parseCourseInput(input),
+        parseSeriesExceptionPolicy(exceptionPolicy),
+      );
+    },
+  );
+  ipcMain.handle('course:delete-series', (event, id: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    getPlannerDatabase().deleteCourseSeries(id);
+  });
+  ipcMain.handle('course:save-exception', (event, input: unknown) => {
+    getTrustedWindow(event);
+    getPlannerDatabase().saveCourseException(parseCourseExceptionInput(input));
+  });
+  ipcMain.handle(
+    'course:delete-exception',
+    (event, courseId: unknown, originalDate: unknown) => {
+      getTrustedWindow(event);
+      assertId(courseId);
+      assertDateKey(originalDate);
+      getPlannerDatabase().deleteCourseException(courseId, originalDate);
+    },
+  );
 };
 
 const createWindow = () => {

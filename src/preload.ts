@@ -1,10 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  Course,
+  CourseExceptionInput,
+  CourseInput,
   DayData,
   Event,
   EventInput,
   EventUpdate,
   MoveDirection,
+  Semester,
+  SemesterInput,
+  SeriesExceptionPolicy,
   Task,
   TaskInput,
   TaskUpdate,
@@ -14,7 +20,11 @@ import {
   assertId,
   parseEventInput,
   parseEventUpdate,
+  parseCourseExceptionInput,
+  parseCourseInput,
   parseMoveDirection,
+  parseSeriesExceptionPolicy,
+  parseSemesterInput,
   parseTaskInput,
   parseTaskUpdate,
 } from './validation';
@@ -55,5 +65,56 @@ contextBridge.exposeInMainWorld('dayByDay', {
   deleteEvent: (id: string): Promise<void> => {
     assertId(id);
     return ipcRenderer.invoke('event:delete', id);
+  },
+  listSemesters: (): Promise<Semester[]> => ipcRenderer.invoke('semester:list'),
+  createSemester: (input: SemesterInput): Promise<Semester> =>
+    ipcRenderer.invoke('semester:create', parseSemesterInput(input)),
+  updateSemester: (id: string, input: SemesterInput): Promise<Semester> => {
+    assertId(id);
+    return ipcRenderer.invoke('semester:update', id, parseSemesterInput(input));
+  },
+  setCurrentSemester: (id: string): Promise<Semester> => {
+    assertId(id);
+    return ipcRenderer.invoke('semester:set-current', id);
+  },
+  listCourses: (semesterId: string): Promise<Course[]> => {
+    assertId(semesterId);
+    return ipcRenderer.invoke('course:list', semesterId);
+  },
+  createCourse: (input: CourseInput): Promise<Course> =>
+    ipcRenderer.invoke('course:create', parseCourseInput(input)),
+  updateCourseSeries: (
+    id: string,
+    input: CourseInput,
+    policy: SeriesExceptionPolicy,
+  ): Promise<Course> => {
+    assertId(id);
+    return ipcRenderer.invoke(
+      'course:update-series',
+      id,
+      parseCourseInput(input),
+      parseSeriesExceptionPolicy(policy),
+    );
+  },
+  deleteCourseSeries: (id: string): Promise<void> => {
+    assertId(id);
+    return ipcRenderer.invoke('course:delete-series', id);
+  },
+  saveCourseException: (input: CourseExceptionInput): Promise<void> =>
+    ipcRenderer.invoke(
+      'course:save-exception',
+      parseCourseExceptionInput(input),
+    ),
+  deleteCourseException: (
+    courseId: string,
+    originalDate: string,
+  ): Promise<void> => {
+    assertId(courseId);
+    assertDateKey(originalDate);
+    return ipcRenderer.invoke(
+      'course:delete-exception',
+      courseId,
+      originalDate,
+    );
   },
 });

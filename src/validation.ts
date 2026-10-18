@@ -1,10 +1,16 @@
 import type {
+  CourseExceptionInput,
+  CourseInput,
+  RecurrenceType,
+  SemesterInput,
+  SeriesExceptionPolicy,
   EventInput,
   EventUpdate,
   MoveDirection,
   TaskInput,
   TaskUpdate,
 } from './domain';
+import { getWeekday } from './courseSchedule';
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -116,5 +122,151 @@ export function parseEventUpdate(value: unknown): EventUpdate {
 
 export function parseMoveDirection(value: unknown): MoveDirection {
   if (value !== 'up' && value !== 'down') throw new Error('排序操作无效。');
+  return value;
+}
+
+export function parseSemesterInput(value: unknown): SemesterInput {
+  const input = record(value, '学期');
+  const semesterName = cleanText(input.semesterName, '学期名称', 120);
+  if (!semesterName) throw new Error('学期名称不能为空。');
+  assertDateKey(input.startDate);
+  assertDateKey(input.endDate);
+  assertDateKey(input.firstWeekMonday);
+  if (input.endDate < input.startDate) {
+    throw new Error('学期结束日期不能早于开始日期。');
+  }
+  if (getWeekday(input.firstWeekMonday) !== 1) {
+    throw new Error('第一教学周必须从星期一开始。');
+  }
+  const firstDay = new Date(`${input.firstWeekMonday}T00:00:00Z`);
+  const startDay = new Date(`${input.startDate}T00:00:00Z`);
+  const dayOffset = (startDay.getTime() - firstDay.getTime()) / 86_400_000;
+  if (dayOffset < 0 || dayOffset > 6 || input.firstWeekMonday > input.endDate) {
+    throw new Error('第一教学周星期一须与学期开始日期处于同一周。');
+  }
+  if (typeof input.isCurrent !== 'boolean') {
+    throw new Error('当前学期选项无效。');
+  }
+  return {
+    semesterName,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    firstWeekMonday: input.firstWeekMonday,
+    isCurrent: input.isCurrent,
+  };
+}
+
+const RECURRENCE_TYPES: RecurrenceType[] = ['ALL', 'ODD', 'EVEN', 'CUSTOM'];
+
+export function parseCourseInput(value: unknown): CourseInput {
+  const input = record(value, '课程');
+  assertId(input.semesterId);
+  const courseName = cleanText(input.courseName, '课程名称', 120);
+  if (!courseName) throw new Error('课程名称不能为空。');
+  if (
+    !Number.isInteger(input.weekday) ||
+    (input.weekday as number) < 1 ||
+    (input.weekday as number) > 7
+  ) {
+    throw new Error('请选择星期一至星期日。');
+  }
+  const startTime = cleanTime(input.startTime, '开始时间');
+  const endTime = cleanTime(input.endTime, '结束时间');
+  if (!startTime || !endTime) throw new Error('课程必须填写开始和结束时间。');
+  if (endTime <= startTime) throw new Error('课程结束时间必须晚于开始时间。');
+  const firstWeek = input.firstWeek;
+  const lastWeek = input.lastWeek;
+  if (
+    !Number.isInteger(firstWeek) ||
+    !Number.isInteger(lastWeek) ||
+    (firstWeek as number) < 1 ||
+    (lastWeek as number) > 52 ||
+    (firstWeek as number) > (lastWeek as number)
+  ) {
+    throw new Error('课程周次范围无效，请填写 1 至 52 周。');
+  }
+  if (
+    typeof input.recurrenceType !== 'string' ||
+    !RECURRENCE_TYPES.includes(input.recurrenceType as RecurrenceType)
+  ) {
+    throw new Error('课程重复方式无效。');
+  }
+  const recurrenceType = input.recurrenceType as RecurrenceType;
+  if (!Array.isArray(input.customWeeks) || input.customWeeks.length > 52) {
+    throw new Error('指定周次格式无效。');
+  }
+  const customWeeks = [...new Set(input.customWeeks)];
+  if (
+    customWeeks.some(
+      (week) =>
+        !Number.isInteger(week) ||
+        (week as number) < (firstWeek as number) ||
+        (week as number) > (lastWeek as number),
+    )
+  ) {
+    throw new Error('指定周次必须位于课程起止周次范围内。');
+  }
+  if (recurrenceType === 'CUSTOM' && customWeeks.length === 0) {
+    throw new Error('指定周次课程至少选择一周。');
+  }
+  return {
+    semesterId: input.semesterId,
+    courseName,
+    weekday: input.weekday as number,
+    startTime,
+    endTime,
+    classroom: cleanText(input.classroom ?? '', '教室', 120),
+    teacher: cleanText(input.teacher ?? '', '教师', 120),
+    notes: cleanText(input.notes ?? '', '备注', 2000),
+    firstWeek: firstWeek as number,
+    lastWeek: lastWeek as number,
+    recurrenceType,
+    customWeeks: recurrenceType === 'CUSTOM' ? (customWeeks as number[]) : [],
+  };
+}
+
+export function parseCourseExceptionInput(
+  value: unknown,
+): CourseExceptionInput {
+  const input = record(value, '单次课程调整');
+  assertId(input.courseId);
+  assertDateKey(input.originalDate);
+  if (typeof input.isCancelled !== 'boolean') {
+    throw new Error('停课状态无效。');
+  }
+  if (input.isCancelled) {
+    return {
+      courseId: input.courseId,
+      originalDate: input.originalDate,
+      isCancelled: true,
+      replacementDate: input.originalDate,
+      startTime: '',
+      endTime: '',
+      classroom: '',
+    };
+  }
+  assertDateKey(input.replacementDate);
+  const startTime = cleanTime(input.startTime, '开始时间');
+  const endTime = cleanTime(input.endTime, '结束时间');
+  if (!startTime || !endTime || endTime <= startTime) {
+    throw new Error('调整后的课程时间必须有效，且结束时间晚于开始时间。');
+  }
+  return {
+    courseId: input.courseId,
+    originalDate: input.originalDate,
+    isCancelled: false,
+    replacementDate: input.replacementDate,
+    startTime,
+    endTime,
+    classroom: cleanText(input.classroom ?? '', '教室', 120),
+  };
+}
+
+export function parseSeriesExceptionPolicy(
+  value: unknown,
+): SeriesExceptionPolicy {
+  if (value !== 'preserve-valid' && value !== 'clear-all') {
+    throw new Error('请明确选择如何处理已有的单次课程调整。');
+  }
   return value;
 }

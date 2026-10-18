@@ -171,7 +171,7 @@ button:disabled {
 }
 
 .date-section {
-  margin-bottom: 20px;
+  margin-bottom: 11px;
   padding: 0 1px;
 }
 .date-navigation {
@@ -262,14 +262,6 @@ button:disabled {
 .today-button:hover {
   background: #eee7dc;
 }
-.greeting {
-  margin: 9px 0 0 36px;
-  color: #80786e;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 13px;
-  font-style: italic;
-}
-
 .notice-message,
 .error-message {
   border-radius: 10px;
@@ -667,6 +659,7 @@ button:disabled {
   font-size: 10px;
 }
 .field-label input,
+.field-label select,
 .field-label textarea {
   width: 100%;
   min-width: 0;
@@ -678,9 +671,339 @@ button:disabled {
   font-size: 11px;
 }
 .field-label input:focus,
+.field-label select:focus,
 .field-label textarea:focus {
   border-color: #c6b296;
   outline: 2px solid rgb(198 178 150 / 18%);
+}
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 15px;
+  padding: 3px;
+  border: 1px solid #ebe7df;
+  border-radius: 11px;
+  background: #efede7;
+}
+.view-tabs button {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 5px;
+  background: transparent;
+  color: #898176;
+  cursor: pointer;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.view-tabs button.is-active {
+  background: #fffefa;
+  color: #3b3832;
+  box-shadow: 0 1px 3px rgb(45 39 31 / 8%);
+}
+.week-view-card,
+.semester-card,
+.planner-card,
+.planner-course-card {
+  border: 1px solid #ece8e0;
+  border-radius: 15px;
+  background: #fffefa;
+  box-shadow: 0 5px 16px rgb(53 47 38 / 3%);
+}
+.week-view-card {
+  margin: 3px 0 17px;
+  padding: 11px 9px 9px;
+}
+.week-view-heading,
+.week-view-actions,
+.planner-page-heading,
+.planner-actions,
+.course-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+.week-view-heading > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.week-view-heading strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+.week-view-heading span {
+  color: #989084;
+  font-size: 9px;
+}
+.week-view-actions {
+  flex: 0 0 auto;
+}
+.week-view-actions button {
+  min-width: 25px;
+  min-height: 24px;
+  border: 1px solid #eee9e1;
+  border-radius: 7px;
+  padding: 2px 6px;
+  background: #fffefa;
+  color: #79684f;
+  cursor: pointer;
+  font-size: 9px;
+}
+.week-day-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 10px;
+}
+.week-day {
+  display: flex;
+  min-width: 0;
+  height: 49px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: #f7f5f0;
+  color: #746d63;
+  cursor: pointer;
+}
+.week-day span {
+  font-size: 8px;
+}
+.week-day strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.week-day i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+.week-day i.has-items {
+  background: #b59b7c;
+}
+.week-day.is-selected {
+  border-color: #b69d80;
+  background: #f0e9df;
+  color: #564936;
+}
+.week-day.is-today strong {
+  text-decoration: underline;
+  text-decoration-color: #b59b7c;
+  text-underline-offset: 3px;
+}
+.week-loading {
+  margin: 6px 0 0;
+  color: #a49b8f;
+  font-size: 9px;
+  text-align: center;
+}
+.course-dot {
+  background: #aa9377;
+}
+.course-schedule-item .schedule-detail {
+  color: #978b7a;
+}
+.exception-original {
+  margin: -6px 0 12px;
+  color: #8d8478;
+  font-size: 10px;
+}
+.exception-modal-actions {
+  flex-wrap: wrap;
+}
+.planner-page {
+  min-width: 0;
+  padding: 0 1px 15px;
+}
+.planner-page-heading {
+  margin: 0 2px 13px;
+}
+.planner-page-heading h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 620;
+}
+.planner-page-heading .eyebrow,
+.modal-heading .eyebrow {
+  margin: 0 0 4px;
+  color: #a1978a;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
+.semester-card {
+  padding: 12px;
+}
+.semester-select-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #978e82;
+  font-size: 9px;
+}
+.semester-select-label select {
+  min-width: 0;
+  border: 1px solid #e8e3da;
+  border-radius: 8px;
+  padding: 7px;
+  background: #f8f6f1;
+  color: #4d4942;
+  font-size: 11px;
+}
+.semester-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 2px;
+}
+.semester-summary strong {
+  font-size: 14px;
+}
+.semester-summary span {
+  color: #948b7e;
+  font-size: 10px;
+}
+.planner-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.planner-actions button {
+  min-height: 30px;
+}
+.course-list-heading {
+  margin: 18px 2px 8px;
+}
+.course-list-heading h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+.planner-course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.planner-course-card {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px;
+}
+.course-card-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+.course-card-copy strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.course-card-copy > span {
+  color: #958c80;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.course-card-copy .course-time {
+  color: #816f57;
+  font-size: 9px;
+  font-weight: 600;
+}
+.planner-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 22px 10px;
+  color: #9b9287;
+  font-size: 11px;
+  text-align: center;
+}
+.planner-modal {
+  width: min(100%, 365px);
+}
+.planner-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.planner-field-row .field-label {
+  min-width: 0;
+}
+.planner-field-row input,
+.planner-field-row select {
+  min-width: 0;
+  width: 100%;
+}
+.planner-check,
+.exception-policy label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #776f65;
+  font-size: 10px;
+}
+.planner-check input,
+.exception-policy input,
+.week-picker input {
+  accent-color: #aa9377;
+}
+.week-picker,
+.exception-policy {
+  margin: 0;
+  border: 1px solid #ece7df;
+  border-radius: 9px;
+  padding: 8px;
+}
+.week-picker legend,
+.exception-policy legend {
+  padding: 0 4px;
+  color: #8b8276;
+  font-size: 9px;
+}
+.week-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 85px;
+  overflow-y: auto;
+}
+.week-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 34px;
+  color: #756d62;
+  font-size: 9px;
+}
+.exception-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+@media (max-width: 350px) {
+  .view-tabs button {
+    padding-right: 3px;
+    padding-left: 3px;
+    font-size: 9px;
+  }
+  .planner-course-card {
+    padding: 8px;
+  }
+  .row-actions {
+    gap: 1px;
+  }
 }
 .field-label textarea {
   min-height: 56px;
