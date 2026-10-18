@@ -9,6 +9,17 @@ import {
 } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { PlannerDatabase } from './database';
+import type { MoveDirection } from './domain';
+import {
+  assertDateKey,
+  assertId,
+  parseEventInput,
+  parseEventUpdate,
+  parseMoveDirection,
+  parseTaskInput,
+  parseTaskUpdate,
+} from './validation';
 import started from 'electron-squirrel-startup';
 
 const DEFAULT_WIDTH = 380;
@@ -27,6 +38,7 @@ type SavedWindowState = {
 
 let mainWindow: BrowserWindow | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let plannerDatabase: PlannerDatabase | undefined;
 
 if (started) {
   app.quit();
@@ -36,6 +48,27 @@ const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 const getStatePath = () => path.join(app.getPath('userData'), STATE_FILE);
+
+const getPlannerDatabase = () => {
+  if (plannerDatabase) return plannerDatabase;
+  try {
+    const userDataPath = app.getPath('userData');
+    fs.mkdirSync(userDataPath, { recursive: true });
+    plannerDatabase = new PlannerDatabase(
+      path.join(userDataPath, 'daybyday.sqlite'),
+    );
+    return plannerDatabase;
+  } catch (error) {
+    console.error(
+      'Could not open the DayByDay database. Existing data was not cleared.',
+      error,
+    );
+    const detail = error instanceof Error ? error.message : '未知错误';
+    throw new Error(
+      `本地数据库打开失败，程序没有清除已有数据。请检查磁盘空间和文件权限后重试。(${detail})`,
+    );
+  }
+};
 
 const readWindowState = (): SavedWindowState => {
   try {
@@ -152,7 +185,11 @@ const keepWindowVisible = () => {
 
 const getTrustedWindow = (event: IpcMainInvokeEvent) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  if (!mainWindow || senderWindow !== mainWindow) {
+  if (
+    !mainWindow ||
+    senderWindow !== mainWindow ||
+    event.senderFrame !== event.sender.mainFrame
+  ) {
     throw new Error(
       'Window controls are only available to the DayByDay window.',
     );
@@ -175,6 +212,60 @@ const registerWindowControls = () => {
   });
   ipcMain.handle('window:close', (event) => {
     getTrustedWindow(event).close();
+  });
+
+  ipcMain.handle('planner:get-day', (event, date: unknown) => {
+    getTrustedWindow(event);
+    assertDateKey(date);
+    const database = getPlannerDatabase();
+    return {
+      tasks: database.listTasks(date),
+      events: database.listEvents(date),
+    };
+  });
+  ipcMain.handle('task:create', (event, input: unknown) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().createTask(parseTaskInput(input));
+  });
+  ipcMain.handle('task:update', (event, input: unknown) => {
+    getTrustedWindow(event);
+    const update = parseTaskUpdate(input);
+    return getPlannerDatabase().updateTask(update.id, update);
+  });
+  ipcMain.handle(
+    'task:set-completed',
+    (event, id: unknown, isCompleted: unknown) => {
+      getTrustedWindow(event);
+      assertId(id);
+      if (typeof isCompleted !== 'boolean')
+        throw new Error('待办完成状态无效。');
+      return getPlannerDatabase().setTaskCompleted(id, isCompleted);
+    },
+  );
+  ipcMain.handle('task:delete', (event, id: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    getPlannerDatabase().deleteTask(id);
+  });
+  ipcMain.handle('task:move', (event, id: unknown, direction: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    const moveDirection: MoveDirection = parseMoveDirection(direction);
+    getPlannerDatabase().moveTask(id, moveDirection);
+  });
+  ipcMain.handle('event:create', (event, input: unknown) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().createEvent(parseEventInput(input));
+  });
+  ipcMain.handle('event:update', (event, input: unknown) => {
+    getTrustedWindow(event);
+    const update = parseEventUpdate(input);
+    return getPlannerDatabase().updateEvent(update.id, update);
+  });
+  ipcMain.handle('event:delete', (event, id: unknown) => {
+    getTrustedWindow(event);
+    assertId(id);
+    getPlannerDatabase().deleteEvent(id);
   });
 };
 
@@ -239,4 +330,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  plannerDatabase?.close();
+  plannerDatabase = undefined;
 });

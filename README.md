@@ -1,45 +1,51 @@
 # DayByDay
 
-DayByDay 是一款正在开发中的 Windows 桌面日程助手。当前阶段提供可拖动、可缩放的桌面小窗口和今日安排预览。
-
-## 当前阶段
-
-第二阶段在 Electron Forge + Vite + React + TypeScript 项目中实现了无边框桌面窗口、今日日期、示例日程和可勾选的示例待办。窗口位置、大小和置顶偏好保存到 Electron 用户数据目录；待办目前只在本次打开期间用于演示。
-
-课程表截图识别、SQLite 正式数据保存、课程导入和云同步尚未实现。
+DayByDay 是一款 Windows 桌面日程助手。当前版本包含可拖动、可缩放的柔和风格悬浮窗，以及本地保存的每日待办和单次临时日程。
 
 ## 启动应用
 
-需要安装 Node.js 和 npm。开发时在 Windows PowerShell 中运行：
+请在 Windows PowerShell 中打开项目文件夹 `D:\DAYBYDAY`，然后运行：
 
-    Set-Location D:\DAYBYDAY
-    npm start
+```powershell
+npm start
+```
 
-应用窗口打开后，可以在终端按 Ctrl+C 停止开发服务器；也可以先关闭应用窗口，再回到终端停止。
+第一次启动前如果项目依赖尚未安装，在该文件夹运行 `npm install`。应用会在本地打开 Electron 窗口，不需要账号或云端服务。
 
-如果项目依赖文件夹 node_modules 尚未安装或已被移除，先运行：
+## 当前功能
 
-    Set-Location D:\DAYBYDAY
-    npm install
-    npm start
+- 用日期两侧的箭头、Today 按钮或日期选择器切换日期。
+- 在 Schedule 中新增、编辑和删除单次日程，支持全天、时间、地点和备注。
+- 在 My to-do list 中快速添加待办，也可以编辑标题、日期和备注，完成、恢复、删除及调整顺序。
+- 删除操作会先显示确认提示；增删改会自动保存。
+- 课程表、截图识别和重复日程尚未加入。
 
-## 常用检查
+## 本地数据
 
-检查 TypeScript 类型：
+SQLite 文件名为 `daybyday.sqlite`，存放在 Electron 的 `app.getPath('userData')` 应用专属目录中。在 Windows 上通常是：
 
-    npm run typecheck
+```text
+%APPDATA%\DayByDay\daybyday.sqlite
+```
 
-检查代码格式和静态规则：
+窗口的位置和大小仍保存在同一应用数据目录下的 `window-state.json`。这两项都不写入项目源代码目录。迁移只升级数据库结构；遇到不支持的数据库版本时会报错，不会清空数据库。
 
-    npm run lint
+需要备份时，先关闭应用，再复制整个 `%APPDATA%\DayByDay` 文件夹到安全位置。不要删除该目录来排查问题。
 
-## 项目文件
+## 开发检查
 
-- src/main.ts：Electron 主进程，创建无边框窗口、管理窗口状态，并通过白名单 IPC 处理窗口控制。
-- src/preload.ts：只向页面暴露置顶、最小化和关闭等必要操作。
-- src/renderer.tsx、src/App.tsx：React 界面入口、日期、示例日程和待办展示。
-- src/index.css：界面与窗口标题栏样式。
-- forge.config.mts：Electron Forge 打包配置。
-- vite.*.config.mts：主进程、预加载脚本和界面的 Vite 配置。
+在项目目录运行：
 
-窗口设置位于 Electron 的用户数据目录，不写入项目源代码目录。本项目使用 Windows 原生环境开发，不使用 WSL。
+```powershell
+npm run typecheck
+npm run lint
+npm test
+```
+
+`npm test` 使用 Node 自带的测试运行器，对临时测试数据库检查待办和日程的增删改查、日期隔离、排序、校验及迁移保护；测试文件写入系统临时目录并在测试后清理。`npm run package` 用于生成本地打包目录；Windows 安装程序制作计划在后续阶段验证。
+
+## 安全设计
+
+Electron 窗口保持 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 里逐项列出的 API 请求主进程读写数据库；主进程会再次检查来源和输入，页面不接触 SQLite 或任意 SQL。
+
+SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。当前 Forge 配置跳过对该模块的源码重建；切换到没有对应预编译文件的平台或架构时，需要重新评估 Electron 兼容性和原生构建工具。
