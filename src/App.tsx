@@ -2,7 +2,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
 } from 'react';
 import type {
@@ -11,15 +13,24 @@ import type {
   DayData,
   Event,
   EventInput,
+  FontSizeScale,
+  ThemeId,
   Task,
   TaskInput,
 } from './domain';
 import { SemesterPlanner } from './SemesterPlanner';
 import { mergeAgendaItems } from './scheduleView';
+import { getThemeTokens, THEME_OPTIONS } from './theme';
 import './index.css';
 
 type Editor = { kind: 'task'; task?: Task } | { kind: 'event'; event?: Event };
-type ViewMode = 'day' | 'week' | 'planner';
+type ViewMode = 'day' | 'week' | 'planner' | 'settings';
+const FONT_SIZE_OPTIONS: Array<{ value: FontSizeScale; label: string }> = [
+  { value: 1, label: '100%' },
+  { value: 1.15, label: '115%' },
+  { value: 1.25, label: '125%' },
+  { value: 1.5, label: '150%' },
+];
 const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
 
 const localDateKey = (date: Date) => {
@@ -523,6 +534,13 @@ export function App() {
   const [weekLoading, setWeekLoading] = useState(false);
   const [weekReload, setWeekReload] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('day');
+  const [fontSizeScale, setFontSizeScale] = useState<FontSizeScale>(1);
+  const [fontSizeError, setFontSizeError] = useState('');
+  const [themeId, setThemeId] = useState<ThemeId>(
+    () => window.dayByDay.initialTheme,
+  );
+  const [themeError, setThemeError] = useState('');
+  const themeChangeSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
@@ -619,6 +637,40 @@ export function App() {
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
+
+  useEffect(() => {
+    void window.dayByDay
+      .getFontSizeScale()
+      .then(setFontSizeScale)
+      .catch((error: unknown) => setFontSizeError(getErrorMessage(error)));
+  }, []);
+
+  const updateFontSizeScale = async (scale: FontSizeScale) => {
+    setFontSizeError('');
+    try {
+      const savedScale = await window.dayByDay.setFontSizeScale(scale);
+      setFontSizeScale(savedScale);
+    } catch (error) {
+      setFontSizeError(getErrorMessage(error));
+    }
+  };
+
+  const updateTheme = async (nextTheme: ThemeId) => {
+    const previousTheme = themeId;
+    const requestSequence = ++themeChangeSequence.current;
+    setThemeError('');
+    setThemeId(nextTheme);
+    try {
+      const savedTheme = await window.dayByDay.setTheme(nextTheme);
+      if (requestSequence === themeChangeSequence.current)
+        setThemeId(savedTheme);
+    } catch (error) {
+      if (requestSequence === themeChangeSequence.current) {
+        setThemeId(previousTheme);
+        setThemeError(getErrorMessage(error));
+      }
+    }
+  };
 
   useEffect(() => {
     void window.dayByDay
@@ -837,13 +889,21 @@ export function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      style={
+        {
+          ...getThemeTokens(themeId),
+          '--font-scale': fontSizeScale,
+        } as CSSProperties
+      }
+    >
       <header className="titlebar">
-        <div className="brand" aria-label="daybyday.">
+        <div className="brand" aria-label="Daybyday">
           <span aria-hidden="true" className="brand-mark">
             d
           </span>
-          <span className="brand-name">daybyday.</span>
+          <span className="brand-name">Daybyday</span>
         </div>
         <div aria-hidden="true" className="drag-region" />
         <nav aria-label="窗口控制" className="window-controls">
@@ -904,6 +964,14 @@ export function App() {
           >
             Semester Planner
           </button>
+          <button
+            aria-pressed={viewMode === 'settings'}
+            className={viewMode === 'settings' ? 'is-active' : ''}
+            onClick={() => setViewMode('settings')}
+            type="button"
+          >
+            Settings
+          </button>
         </nav>
         {viewMode === 'planner' ? (
           <SemesterPlanner
@@ -916,6 +984,111 @@ export function App() {
               setViewMode('day');
             }}
           />
+        ) : viewMode === 'settings' ? (
+          <section aria-labelledby="settings-heading" className="settings-page">
+            <div className="settings-page-heading">
+              <p className="eyebrow">PREFERENCES</p>
+              <h1 id="settings-heading">Settings</h1>
+            </div>
+            <section
+              aria-labelledby="font-size-heading"
+              className="settings-card"
+            >
+              <div className="settings-card-heading">
+                <div>
+                  <h2 id="font-size-heading">Font size</h2>
+                  <p>调整全应用文字大小，设置会保存在这台电脑上。</p>
+                </div>
+              </div>
+              <div
+                aria-label="字体大小"
+                className="font-size-options"
+                role="group"
+              >
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <button
+                    aria-pressed={fontSizeScale === option.value}
+                    className={
+                      fontSizeScale === option.value ? 'is-active' : ''
+                    }
+                    key={option.value}
+                    onClick={() => void updateFontSizeScale(option.value)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="settings-help">
+                100% 为默认大小；115%、125% 和 150%
+                可按阅读习惯选择。文字变大后，内容区域仍可滚动。
+              </p>
+              {(window.innerWidth < 440 || window.innerHeight < 680) && (
+                <p className="settings-notice" role="status">
+                  当前窗口空间较小。为保留你已有的窗口尺寸，DayByDay
+                  没有自动调整窗口；可拖动窗口边缘扩大查看区域。
+                </p>
+              )}
+              {fontSizeError && (
+                <p className="form-error" role="alert">
+                  {fontSizeError}
+                </p>
+              )}
+            </section>
+            <section
+              aria-labelledby="theme-color-heading"
+              className="settings-card appearance-card"
+            >
+              <div className="settings-card-heading">
+                <div>
+                  <p className="settings-eyebrow">Appearance</p>
+                  <h2 id="theme-color-heading">Theme Color</h2>
+                  <p>选择低饱和度主题，点击后立即预览并保存在这台电脑上。</p>
+                </div>
+                <button
+                  className="reset-theme-button"
+                  disabled={themeId === 'classic'}
+                  onClick={() => void updateTheme('classic')}
+                  type="button"
+                >
+                  Reset to default
+                </button>
+              </div>
+              <div aria-label="主题颜色" className="theme-options" role="group">
+                {THEME_OPTIONS.map((theme) => (
+                  <button
+                    aria-pressed={themeId === theme.id}
+                    className={`theme-option${themeId === theme.id ? ' is-active' : ''}`}
+                    key={theme.id}
+                    onClick={() => void updateTheme(theme.id)}
+                    type="button"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="theme-swatch"
+                      style={
+                        {
+                          '--swatch-accent': theme.accent,
+                          '--swatch-background': theme.background,
+                        } as CSSProperties
+                      }
+                    >
+                      <i />
+                    </span>
+                    <span className="theme-option-name">{theme.name}</span>
+                    <span aria-hidden="true" className="theme-option-check">
+                      {themeId === theme.id ? '✓' : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {themeError && (
+                <p className="form-error" role="alert">
+                  {themeError}
+                </p>
+              )}
+            </section>
+          </section>
         ) : (
           <>
             <section aria-label="日期导航" className="date-section">

@@ -10,6 +10,7 @@ const {
   parseTaskInput,
   parseCourseInput,
   parseSemesterInput,
+  parseFontSizeScale,
 } = require('../.test-output/validation.js');
 const {
   courseDateForWeek,
@@ -17,6 +18,15 @@ const {
   shiftDateKey,
 } = require('../.test-output/courseSchedule.js');
 const { mergeAgendaItems } = require('../.test-output/scheduleView.js');
+
+test('font size preferences accept only the four supported persisted scales', () => {
+  assert.deepEqual(
+    [1, 1.15, 1.25, 1.5].map(parseFontSizeScale),
+    [1, 1.15, 1.25, 1.5],
+  );
+  for (const invalid of [0.9, 1.1, 2, '125%', null])
+    assert.throws(() => parseFontSizeScale(invalid), /字体大小选项无效/);
+});
 
 let temporaryDirectory;
 let database;

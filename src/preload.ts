@@ -17,6 +17,8 @@ import type {
   Event,
   EventInput,
   EventUpdate,
+  FontSizeScale,
+  ThemeId,
   MoveDirection,
   Semester,
   SemesterInput,
@@ -41,9 +43,15 @@ import {
   parseSemesterInput,
   parseTaskInput,
   parseTaskUpdate,
+  parseThemeId,
 } from './validation';
 
+const initialTheme = parseThemeId(
+  ipcRenderer.sendSync('settings:get-initial-theme'),
+);
+
 contextBridge.exposeInMainWorld('dayByDay', {
+  initialTheme,
   getAlwaysOnTop: (): Promise<boolean> =>
     ipcRenderer.invoke('window:get-always-on-top'),
   toggleAlwaysOnTop: (): Promise<boolean> =>
@@ -54,6 +62,15 @@ contextBridge.exposeInMainWorld('dayByDay', {
     if (typeof enabled !== 'boolean') throw new Error('导入页面窗口选项无效。');
     return ipcRenderer.invoke('window:set-import-mode', enabled);
   },
+  getFontSizeScale: (): Promise<FontSizeScale> =>
+    ipcRenderer.invoke('settings:get-font-size-scale'),
+  setFontSizeScale: (scale: FontSizeScale): Promise<FontSizeScale> => {
+    if (![1, 1.15, 1.25, 1.5].includes(scale))
+      throw new Error('字体大小选项无效。');
+    return ipcRenderer.invoke('settings:set-font-size-scale', scale);
+  },
+  setTheme: (themeId: ThemeId): Promise<ThemeId> =>
+    ipcRenderer.invoke('settings:set-theme', parseThemeId(themeId)),
   getDay: (date: string): Promise<DayData> => {
     assertDateKey(date);
     return ipcRenderer.invoke('planner:get-day', date);

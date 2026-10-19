@@ -16,6 +16,8 @@ import type {
   Event,
   EventInput,
   EventUpdate,
+  FontSizeScale,
+  ThemeId,
   MoveDirection,
   Semester,
   SemesterInput,
@@ -30,11 +32,15 @@ export {};
 declare global {
   interface Window {
     dayByDay: {
+      initialTheme: ThemeId;
       getAlwaysOnTop: () => Promise<boolean>;
       toggleAlwaysOnTop: () => Promise<boolean>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
       setImportWindowMode: (enabled: boolean) => Promise<void>;
+      getFontSizeScale: () => Promise<FontSizeScale>;
+      setFontSizeScale: (scale: FontSizeScale) => Promise<FontSizeScale>;
+      setTheme: (themeId: ThemeId) => Promise<ThemeId>;
       getDay: (date: string) => Promise<DayData>;
       createTask: (input: TaskInput) => Promise<Task>;
       updateTask: (input: TaskUpdate) => Promise<Task>;

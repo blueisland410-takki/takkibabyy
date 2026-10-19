@@ -1,4 +1,4 @@
-# DayByDay
+# Daybyday
 
 DayByDay 是一款 Windows 桌面日程助手。当前版本包含可拖动、可缩放的悬浮窗、本地每日待办和临时日程，以及按教学周重复计算的学期课程和周视图。
 
@@ -98,3 +98,9 @@ npm run package
 Electron 窗口使用 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 中逐项列出的 API 请求主进程访问数据库；主进程会再次检查 IPC 来源和参数，页面不能运行 SQL。
 
 SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。Vite 将原生模块留在主进程包外，避免从生成目录寻找 `.node` 文件。课程截图通过本地 Tesseract.js 和受限白名单资源协议处理；没有云端 OCR、云同步或账号系统。
+
+## 字体、窗口和主题
+
+新安装默认使用 440 × 680 的窗口；已有窗口的位置、大小和置顶状态会继续恢复。顶部 **Settings → Font size** 可选 100%、115%、125% 或 150%，文字放大后页面仍可滚动。
+
+**Settings → Appearance → Theme Color** 提供 Classic、Dusty Rose、Sage Green、Misty Blue、Muted Lavender 和 Oat Beige。点击后立即预览，重启后保留；**Reset to default** 恢复 Classic。主题与字体、窗口及置顶偏好保存在 `%APPDATA%\DayByDay\window-state.json`，不写入 SQLite。浅色主题使用深色强调按钮文字，Classic 深色按钮使用白色文字。

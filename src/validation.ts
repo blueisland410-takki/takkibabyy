@@ -2,6 +2,8 @@ import type {
   ClassPeriodTime,
   CourseExceptionInput,
   CourseInput,
+  FontSizeScale,
+  ThemeId,
   ImportBatchDecision,
   ImportBatchPayload,
   ImportExceptionDraft,
@@ -16,11 +18,29 @@ import type {
   TaskUpdate,
 } from './domain';
 import { getWeekday } from './courseSchedule';
+import { isThemeId } from './theme';
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const FONT_SIZE_SCALES: FontSizeScale[] = [1, 1.15, 1.25, 1.5];
+
+export function parseFontSizeScale(value: unknown): FontSizeScale {
+  if (
+    typeof value !== 'number' ||
+    !FONT_SIZE_SCALES.includes(value as FontSizeScale)
+  ) {
+    throw new Error('字体大小选项无效，请从 100%、115%、125% 或 150% 中选择。');
+  }
+  return value as FontSizeScale;
+}
+
+export function parseThemeId(value: unknown): ThemeId {
+  if (isThemeId(value)) return value;
+  throw new Error('主题选项无效。');
+}
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

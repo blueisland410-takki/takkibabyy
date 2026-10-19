@@ -71,6 +71,14 @@ export type SemesterInput = {
 };
 
 export type RecurrenceType = 'ALL' | 'ODD' | 'EVEN' | 'CUSTOM';
+export type FontSizeScale = 1 | 1.15 | 1.25 | 1.5;
+export type ThemeId =
+  | 'classic'
+  | 'dusty-rose'
+  | 'sage-green'
+  | 'misty-blue'
+  | 'muted-lavender'
+  | 'oat-beige';
 
 export type Course = {
   id: string;

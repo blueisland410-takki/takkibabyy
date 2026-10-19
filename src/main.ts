@@ -5,6 +5,7 @@ import {
   protocol,
   screen,
   type BrowserWindowConstructorOptions,
+  type IpcMainEvent,
   type IpcMainInvokeEvent,
   type Rectangle,
 } from 'electron';
@@ -12,10 +13,18 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PlannerDatabase, type SqliteDatabaseConstructor } from './database';
-import type { CourseImportDecision, MoveDirection } from './domain';
+import { isThemeId } from './theme';
+import type {
+  CourseImportDecision,
+  FontSizeScale,
+  MoveDirection,
+  ThemeId,
+} from './domain';
 import {
   assertDateKey,
   assertId,
+  parseFontSizeScale,
+  parseThemeId,
   parseCourseExceptionInput,
   parseCourseImportDecisions,
   parseCourseImportInputs,
@@ -33,8 +42,8 @@ import {
 } from './validation';
 import started from 'electron-squirrel-startup';
 
-const DEFAULT_WIDTH = 380;
-const DEFAULT_HEIGHT = 620;
+const DEFAULT_WIDTH = 440;
+const DEFAULT_HEIGHT = 680;
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 420;
 const STATE_FILE = 'window-state.json';
@@ -58,12 +67,16 @@ type SavedWindowState = {
   width: number;
   height: number;
   alwaysOnTop: boolean;
+  fontSizeScale: FontSizeScale;
+  themeId: ThemeId;
 };
 
 let mainWindow: BrowserWindow | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let plannerDatabase: PlannerDatabase | undefined;
 let boundsBeforeImportMode: Rectangle | undefined;
+let currentFontSizeScale: FontSizeScale = 1;
+let currentThemeId: ThemeId = 'classic';
 
 if (started) {
   app.quit();
@@ -123,15 +136,25 @@ const readWindowState = (): SavedWindowState => {
         ? Math.round(parsed.height)
         : DEFAULT_HEIGHT,
       alwaysOnTop: parsed.alwaysOnTop === true,
+      fontSizeScale: isFontSizeScale(parsed.fontSizeScale)
+        ? parsed.fontSizeScale
+        : 1,
+      themeId: isThemeId(parsed.themeId) ? parsed.themeId : 'classic',
     };
   } catch {
     return {
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
       alwaysOnTop: false,
+      fontSizeScale: 1,
+      themeId: 'classic',
     };
   }
 };
+
+function isFontSizeScale(value: unknown): value is FontSizeScale {
+  return value === 1 || value === 1.15 || value === 1.25 || value === 1.5;
+}
 
 const clampToVisibleDisplay = (bounds: Rectangle): Rectangle => {
   const { workArea } = screen.getDisplayMatching(bounds);
@@ -178,21 +201,25 @@ const getInitialBounds = (state: SavedWindowState): Rectangle => {
   };
 };
 
-const saveWindowState = () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+const saveWindowState = (): boolean => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
 
   const bounds = mainWindow.getBounds();
   const state: SavedWindowState = {
     ...bounds,
     alwaysOnTop: mainWindow.isAlwaysOnTop(),
+    fontSizeScale: currentFontSizeScale,
+    themeId: currentThemeId,
   };
 
   try {
     const directory = app.getPath('userData');
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(getStatePath(), JSON.stringify(state, null, 2), 'utf8');
+    return true;
   } catch (error) {
     console.error('Could not save the DayByDay window settings.', error);
+    return false;
   }
 };
 
@@ -292,6 +319,15 @@ const getTrustedWindow = (event: IpcMainInvokeEvent) => {
 };
 
 const registerWindowControls = () => {
+  ipcMain.on('settings:get-initial-theme', (event: IpcMainEvent) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    event.returnValue =
+      mainWindow &&
+      senderWindow === mainWindow &&
+      event.senderFrame === event.sender.mainFrame
+        ? currentThemeId
+        : 'classic';
+  });
   ipcMain.handle('window:get-always-on-top', (event) =>
     getTrustedWindow(event).isAlwaysOnTop(),
   );
@@ -316,8 +352,8 @@ const registerWindowControls = () => {
       window.setBounds(
         clampToVisibleDisplay({
           ...boundsBeforeImportMode,
-          width: Math.min(1020, workArea.width),
-          height: Math.min(820, workArea.height),
+          width: Math.min(1180, workArea.width),
+          height: Math.min(900, workArea.height),
         }),
         true,
       );
@@ -325,6 +361,34 @@ const registerWindowControls = () => {
       window.setBounds(clampToVisibleDisplay(boundsBeforeImportMode), true);
       boundsBeforeImportMode = undefined;
     }
+  });
+  ipcMain.handle('settings:get-font-size-scale', (event) => {
+    getTrustedWindow(event);
+    return currentFontSizeScale;
+  });
+  ipcMain.handle('settings:set-font-size-scale', (event, value: unknown) => {
+    getTrustedWindow(event);
+    const previousValue = currentFontSizeScale;
+    currentFontSizeScale = parseFontSizeScale(value);
+    if (!saveWindowState()) {
+      currentFontSizeScale = previousValue;
+      throw new Error(
+        '字体设置未能保存到本机，请检查用户数据目录写入权限后重试。',
+      );
+    }
+    return currentFontSizeScale;
+  });
+  ipcMain.handle('settings:set-theme', (event, value: unknown) => {
+    getTrustedWindow(event);
+    const previousValue = currentThemeId;
+    currentThemeId = parseThemeId(value);
+    if (!saveWindowState()) {
+      currentThemeId = previousValue;
+      throw new Error(
+        '主题设置未能保存到本机，请检查用户数据目录写入权限后重试。',
+      );
+    }
+    return currentThemeId;
   });
 
   ipcMain.handle('planner:get-day', (event, date: unknown) => {
@@ -521,15 +585,17 @@ const registerWindowControls = () => {
 
 const createWindow = () => {
   const savedState = readWindowState();
+  currentFontSizeScale = savedState.fontSizeScale;
+  currentThemeId = savedState.themeId;
   const bounds = getInitialBounds(savedState);
   const options: BrowserWindowConstructorOptions = {
-    title: 'daybyday.',
+    title: 'Daybyday',
     ...bounds,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
     frame: false,
     resizable: true,
-    backgroundColor: '#f7f5f0',
+    backgroundColor: '#F5F5F3',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
