@@ -78,6 +78,18 @@ npm start
 
 **Settings → Language → App Language** 可即时切换简体中文、繁體中文、日本語、한국어和 English；选项始终显示各语言的本地名称。界面日期和星期随语言格式化，课程、待办、备注、教师/教室名称及导入原文均保持用户输入内容。主题、语言、字号比例与窗口位置、大小及置顶偏好保存在 `%APPDATA%\DayByDay\window-state.json`，不会写入 SQLite 或更改课程、待办和日程。旧设置缺少语言字段时默认使用简体中文。
 
+## Windows 桌面集成（Phase 6A）
+
+应用启动后会在 Windows 通知区域创建一个 **Daybyday** 托盘图标。单击图标恢复今日窗口；右键菜单可以显示/隐藏窗口、聚焦快速添加待办、打开完整周视图、打开 Settings 或完全退出。托盘菜单会跟随当前应用语言即时更新。系统只创建一个主窗口和一个托盘图标；再次启动时会把已有窗口带到前台。
+
+**Settings → Window** 中的 **关闭到托盘** 默认关闭。关闭时会保存窗口位置、大小和设置；关闭到托盘开启后，点窗口的关闭按钮只会隐藏窗口，应用继续运行。最小化仍是普通最小化，点托盘图标可以恢复。托盘菜单中的“完全退出 Daybyday”会结束应用并关闭 SQLite 连接。
+
+**Launch at Windows startup** 默认关闭。只有正式安装的 Squirrel.Windows 版本才可切换；开发版会显示不可用状态，也不会注册开发目录或 npm 启动命令。程序通过 Electron 的 Windows 登录启动 API 查询实际启动状态，并使用 Squirrel 版本目录上一层的稳定启动器，以便升级后仍启动最新版本。此阶段自动化测试覆盖了启动器路径和五种语言的菜单文案；尚未制作/安装正式 Squirrel 安装包，也没有实际改动 Windows 启动项，因此安装版启动项、升级和重启 Windows 后自动启动仍需在 Phase 6C 安装测试中验证。
+
+桌面运行验证当前受 Electron 运行时故障阻挡：在这台 Windows 11（OS build 26200）环境中，`electron --version` 自身触发 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`）；`npm start` 和打包目录中的 exe 也未能打开窗口。该错误发生在 Electron 主进程代码运行前，因此本阶段托盘、关闭到托盘和窗口 UI 行为还没有实际 GUI 验证。类型检查、lint、自动化测试和 Forge 打包均通过；启动尝试使用 `.test-output` 隔离的 APPDATA，没有访问或改写正式 `%APPDATA%\DayByDay` 用户数据。需要先解决这台环境的 Electron 运行时问题，再完成 GUI 手动验收。
+
+托盘关闭偏好和最后一次读取的启动偏好沿用 `window-state.json` 保存；SQLite 文件和已有业务数据不会迁移或重建。`package.json` 中现有 `productName` 与 AppUserModelID 保持原样，以避免改变既有安装及用户数据标识；窗口和托盘中的可见品牌为 **Daybyday**。
+
 应用语言资源位于 `locales/zh-CN.json`、`locales/zh-TW.json`、`locales/ja-JP.json`、`locales/ko-KR.json` 和 `locales/en-US.json`。五份资源使用同一组翻译键；页面切换不改变 OCR 语言、教学周次、单双周规则或本地日期计算。未收录的底层错误在非简体中文界面显示通用重试提示，避免把简体中文错误直接混入其他语言；简体中文保留原始详细错误，新增用户可见错误时应同步补充各语言资源。
 
 全应用字号由 CSS 字体变量统一管理：说明文字最低 13px，按钮约 15px，正文约 16px，栏目标题约 19px，主标题约 24px；所选比例会统一应用到今日视图、周视图、学期管理和导入校对页面。Electron 窗口按 Windows 逻辑像素布局，适配 125% / 150% 显示缩放；实际显示效果仍建议在目标电脑上查看。

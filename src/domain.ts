@@ -83,6 +83,12 @@ export type ThemeId =
   | 'sapphire'
   | 'y2k-pink';
 export type LanguageId = 'zh-CN' | 'zh-TW' | 'ja-JP' | 'ko-KR' | 'en-US';
+export type TrayAction = 'quick-task' | 'week' | 'settings';
+export type DesktopSettings = {
+  closeToTray: boolean;
+  launchAtStartup: boolean;
+  startupAvailable: boolean;
+};
 
 export type Course = {
   id: string;

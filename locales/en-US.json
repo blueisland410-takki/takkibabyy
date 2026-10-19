@@ -318,5 +318,17 @@
   "删除": "Delete",
   "未命名记录": "Untitled item",
   "删除识别课程": "Remove recognized course",
-  "未命名课程": "Untitled course"
+  "未命名课程": "Untitled course",
+  "显示今日窗口": "Show today's window",
+  "隐藏今日窗口": "Hide today's window",
+  "打开完整课表": "Open full timetable",
+  "打开设置": "Open Settings",
+  "完全退出 Daybyday": "Quit Daybyday",
+  "关闭到托盘": "Close to tray",
+  "关闭窗口时隐藏到系统托盘，应用仍会继续运行。": "Hide the window to the system tray when closed. The app will keep running.",
+  "Launch at Windows startup": "Launch at Windows startup",
+  "开机启动状态会直接向 Windows 查询。": "Startup status is read directly from Windows.",
+  "仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。": "Startup is available in the installed app only. The development version will not create a Windows startup entry.",
+  "无法读取 Windows 开机启动状态，请稍后重试。": "Could not read the Windows startup status. Please try again.",
+  "无法更新 Windows 开机启动设置，请检查安装位置和当前用户权限后重试。": "Could not update the Windows startup setting. Check the install location and your user permissions, then try again."
 }

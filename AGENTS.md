@@ -61,3 +61,7 @@
 - 当前阶段自动化测试使用独立临时数据库。打包或 Electron 桌面交互如受运行环境限制，必须在交付说明中标出未验证项，不得将其写成通过。
 - 合成课表图片与 OCR 测试必须独立于用户隐私图片。断网打包应用的完整 UI OCR 流程仍需在 Windows 安装包中人工复核；自动化离线测试使用本地 Tesseract.js、WASM 与合成 PNG。
 - 未规划云同步和账号系统；不要在用户未要求时加入。
+- Phase 6A Windows 桌面集成：主窗口使用单实例锁；托盘实例只创建一次，菜单支持五种应用语言并在语言切换后刷新。托盘 IPC 仅传递固定的待办/Week/Settings 动作；SQLite 仍只由主进程访问。`closeToTray` 与启动偏好向后兼容地保存在 `userData/window-state.json`，旧文件字段缺失时按关闭处理；默认不开机启动。
+- Windows 登录启动只在已打包并能找到 Squirrel 稳定启动器时开放。必须使用 Electron `app.setLoginItemSettings`，路径指向版本目录上一层的启动器；开发版不得注册启动项。只有安装版实际测试完成后才能宣称开机启动已验证；Squirrel 安装包、升级、卸载及 Windows 重启验证属于 Phase 6C。
+- Phase 6A 增加的 `resources/daybyday-tray.ico` 必须通过 Forge `extraResource` 同时进入打包资源；窗口标题与托盘可见品牌是 `Daybyday`。保留现有 `package.json` `productName`、AppUserModelID（当前未设置）和 `%APPDATA%\DayByDay` 数据目录标识，不能因品牌大小写改动触发新用户数据目录。
+- Phase 6A 当前运行阻塞记录：Windows build 26200 上 Electron 44.9.0 的独立 `electron --version` 触发 `EXCEPTION_BREAKPOINT` / `0x80000003`，`npm start` 和打包 exe 均未显示窗口。该崩溃在应用主进程脚本开始执行前发生；不得据此声称托盘/窗口 GUI 已验证，也不要为绕过它而关闭安全设置。重新开始 6B 或 6C 前，先在目标 Windows 环境修复并复测 Electron runtime；当前 Phase 6A 的静态验证与打包结果不能替代 GUI 验收。

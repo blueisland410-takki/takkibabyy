@@ -1,6 +1,7 @@
 import type {
   Course,
   CourseExceptionInput,
+  DesktopSettings,
   CourseImportAnalysis,
   CourseImportDecision,
   CourseImportResult,
@@ -19,6 +20,7 @@ import type {
   FontSizeScale,
   LanguageId,
   ThemeId,
+  TrayAction,
   MoveDirection,
   Semester,
   SemesterInput,
@@ -39,6 +41,10 @@ declare global {
       toggleAlwaysOnTop: () => Promise<boolean>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      getDesktopSettings: () => Promise<DesktopSettings>;
+      setCloseToTray: (enabled: boolean) => Promise<boolean>;
+      setLaunchAtStartup: (enabled: boolean) => Promise<DesktopSettings>;
+      onTrayAction: (callback: (action: TrayAction) => void) => () => void;
       setImportWindowMode: (enabled: boolean) => Promise<void>;
       getFontSizeScale: () => Promise<FontSizeScale>;
       setFontSizeScale: (scale: FontSizeScale) => Promise<FontSizeScale>;

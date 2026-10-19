@@ -565,8 +565,16 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [closeToTray, setCloseToTray] = useState(false);
+  const [launchAtStartup, setLaunchAtStartup] = useState(false);
+  const [startupAvailable, setStartupAvailable] = useState(false);
+  const [desktopSettingsLoaded, setDesktopSettingsLoaded] = useState(false);
+  const [desktopSettingsError, setDesktopSettingsError] = useState('');
+  const [startupSaving, setStartupSaving] = useState(false);
   const [controlMessage, setControlMessage] = useState('');
   const [quickTitle, setQuickTitle] = useState('');
+  const quickTaskInputRef = useRef<HTMLInputElement>(null);
+  const [quickTaskFocusRequested, setQuickTaskFocusRequested] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [editorError, setEditorError] = useState('');
@@ -733,6 +741,43 @@ export function App() {
       .catch(() => setControlMessage('窗口设置暂时无法读取。'));
   }, []);
 
+  useEffect(() => {
+    void window.dayByDay
+      .getDesktopSettings()
+      .then((settings) => {
+        setCloseToTray(settings.closeToTray);
+        setLaunchAtStartup(settings.launchAtStartup);
+        setStartupAvailable(settings.startupAvailable);
+        setDesktopSettingsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        setDesktopSettingsError(getErrorMessage(error));
+        setDesktopSettingsLoaded(true);
+      });
+  }, []);
+
+  useEffect(
+    () =>
+      window.dayByDay.onTrayAction((action) => {
+        if (action === 'week') {
+          setViewMode('week');
+        } else if (action === 'settings') {
+          setViewMode('settings');
+        } else {
+          setSelectedDate(localDateKey(new Date()));
+          setViewMode('day');
+          setQuickTaskFocusRequested(true);
+        }
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!quickTaskFocusRequested || viewMode !== 'day') return;
+    quickTaskInputRef.current?.focus();
+    setQuickTaskFocusRequested(false);
+  }, [quickTaskFocusRequested, viewMode, selectedDate]);
+
   const dateObject = useMemo(() => {
     const [year, month, day] = selectedDate.split('-').map(Number);
     return new Date(year, month - 1, day, 12);
@@ -773,6 +818,32 @@ export function App() {
       setControlMessage('');
     } catch {
       setControlMessage('置顶设置失败，请重试。');
+    }
+  };
+
+  const toggleCloseToTray = async () => {
+    const nextValue = !closeToTray;
+    setDesktopSettingsError('');
+    try {
+      setCloseToTray(await window.dayByDay.setCloseToTray(nextValue));
+    } catch (error) {
+      setDesktopSettingsError(getErrorMessage(error));
+    }
+  };
+
+  const updateLaunchAtStartup = async () => {
+    if (!startupAvailable || startupSaving) return;
+    setStartupSaving(true);
+    setDesktopSettingsError('');
+    try {
+      const settings =
+        await window.dayByDay.setLaunchAtStartup(!launchAtStartup);
+      setLaunchAtStartup(settings.launchAtStartup);
+      setStartupAvailable(settings.startupAvailable);
+    } catch (error) {
+      setDesktopSettingsError(getErrorMessage(error));
+    } finally {
+      setStartupSaving(false);
     }
   };
 
@@ -1222,8 +1293,11 @@ export function App() {
               <div className="settings-card-heading">
                 <div>
                   <p className="settings-eyebrow">{t('Window')}</p>
-                  <h2 id="window-settings-heading">{t('Always on Top')}</h2>
+                  <h2 id="window-settings-heading">{t('窗口控制')}</h2>
                 </div>
+              </div>
+              <div className="desktop-setting-row">
+                <span>{t('Always on Top')}</span>
                 <button
                   aria-pressed={alwaysOnTop}
                   className={`language-window-toggle${alwaysOnTop ? ' is-active' : ''}`}
@@ -1233,6 +1307,50 @@ export function App() {
                   {t(alwaysOnTop ? 'On' : 'Off')}
                 </button>
               </div>
+              <div className="desktop-setting-row">
+                <div>
+                  <span>{t('关闭到托盘')}</span>
+                  <p className="settings-help">
+                    {t('关闭窗口时隐藏到系统托盘，应用仍会继续运行。')}
+                  </p>
+                </div>
+                <button
+                  aria-pressed={closeToTray}
+                  className={`language-window-toggle${closeToTray ? ' is-active' : ''}`}
+                  onClick={() => void toggleCloseToTray()}
+                  type="button"
+                >
+                  {t(closeToTray ? 'On' : 'Off')}
+                </button>
+              </div>
+              <div className="desktop-setting-row">
+                <div>
+                  <span>{t('Launch at Windows startup')}</span>
+                  <p className="settings-help">
+                    {startupAvailable
+                      ? t('开机启动状态会直接向 Windows 查询。')
+                      : t(
+                          '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
+                        )}
+                  </p>
+                </div>
+                <button
+                  aria-pressed={launchAtStartup}
+                  className={`language-window-toggle${launchAtStartup ? ' is-active' : ''}`}
+                  disabled={
+                    !startupAvailable || !desktopSettingsLoaded || startupSaving
+                  }
+                  onClick={() => void updateLaunchAtStartup()}
+                  type="button"
+                >
+                  {t(launchAtStartup ? 'On' : 'Off')}
+                </button>
+              </div>
+              {desktopSettingsError && (
+                <p className="form-error" role="alert">
+                  {translateSystemMessage(desktopSettingsError)}
+                </p>
+              )}
             </section>
           </section>
         ) : (
@@ -1564,6 +1682,7 @@ export function App() {
                   maxLength={160}
                   onChange={(event) => setQuickTitle(event.target.value)}
                   placeholder={t('写下一件要完成的小事…')}
+                  ref={quickTaskInputRef}
                   value={quickTitle}
                 />
                 <button

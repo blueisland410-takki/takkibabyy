@@ -2301,6 +2301,30 @@ button:disabled {
   background: var(--accent-subtle);
   color: var(--accent-text);
 }
+.desktop-setting-row {
+  align-items: flex-start;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem 0;
+}
+.desktop-setting-row > div {
+  min-width: 0;
+}
+.desktop-setting-row > span,
+.desktop-setting-row > div > span {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.desktop-setting-row .settings-help {
+  margin: 0.35rem 0 0;
+}
+.desktop-setting-row .language-window-toggle {
+  flex: 0 0 auto;
+}
 .reset-theme-button {
   min-height: 34px;
   flex: 0 0 auto;

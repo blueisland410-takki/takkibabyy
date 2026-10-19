@@ -54,6 +54,12 @@ export const t = (
   return message;
 };
 
+/** Translate a small main-process message without changing renderer language state. */
+export const translateForLanguage = (
+  language: LanguageId,
+  key: string,
+): string => resources[language][key] ?? resources['zh-CN'][key] ?? key;
+
 const escapeRegularExpression = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

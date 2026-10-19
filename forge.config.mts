@@ -17,6 +17,7 @@ const config: ForgeConfig = {
     extraResource: [
       path.resolve('resources/ocr'),
       path.resolve('resources/better-sqlite3'),
+      path.resolve('resources/daybyday-tray.ico'),
     ],
     download: { cacheRoot: path.resolve('.electron-cache') },
     tmpdir: path.resolve('.package-temp'),

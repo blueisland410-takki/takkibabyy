@@ -2,8 +2,11 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
+  nativeImage,
   protocol,
   screen,
+  Tray,
   type BrowserWindowConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -14,8 +17,16 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PlannerDatabase, type SqliteDatabaseConstructor } from './database';
 import { getThemeDefinition, isThemeId } from './theme';
+import {
+  getSquirrelLoginItemOptions,
+  getTrayMenuLabels,
+  normalizeDesktopPreferenceFlags,
+  type TrayAction,
+} from './desktopIntegration';
+import { translateForLanguage } from './i18n';
 import type {
   CourseImportDecision,
+  DesktopSettings,
   FontSizeScale,
   LanguageId,
   MoveDirection,
@@ -50,6 +61,7 @@ const MIN_WIDTH = 320;
 const MIN_HEIGHT = 420;
 const STATE_FILE = 'window-state.json';
 const OCR_CORE_FILE = 'tesseract-core-lstm.wasm.js';
+const TRAY_ICON_FILE = 'daybyday-tray.ico';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -69,20 +81,30 @@ type SavedWindowState = {
   width: number;
   height: number;
   alwaysOnTop: boolean;
+  closeToTray: boolean;
+  launchAtStartup: boolean;
   fontSizeScale: FontSizeScale;
   themeId: ThemeId;
   languageId: LanguageId;
 };
 
 let mainWindow: BrowserWindow | undefined;
+let tray: Tray | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let plannerDatabase: PlannerDatabase | undefined;
 let boundsBeforeImportMode: Rectangle | undefined;
+let mainWindowReady = false;
+let isQuitting = false;
+let pendingTrayAction: TrayAction | undefined;
 let currentFontSizeScale: FontSizeScale = 1;
 let currentThemeId: ThemeId = 'classic';
 let currentLanguageId: LanguageId = 'zh-CN';
+let currentCloseToTray = false;
+let currentLaunchAtStartup = false;
 
-if (started) {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (started || !hasSingleInstanceLock) {
   app.quit();
 }
 
@@ -140,6 +162,7 @@ const readWindowState = (): SavedWindowState => {
         ? Math.round(parsed.height)
         : DEFAULT_HEIGHT,
       alwaysOnTop: parsed.alwaysOnTop === true,
+      ...normalizeDesktopPreferenceFlags(parsed),
       fontSizeScale: isFontSizeScale(parsed.fontSizeScale)
         ? parsed.fontSizeScale
         : 1,
@@ -158,6 +181,8 @@ const readWindowState = (): SavedWindowState => {
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
       alwaysOnTop: false,
+      closeToTray: false,
+      launchAtStartup: false,
       fontSizeScale: 1,
       themeId: 'classic',
       languageId: 'zh-CN',
@@ -221,6 +246,8 @@ const saveWindowState = (): boolean => {
   const state: SavedWindowState = {
     ...bounds,
     alwaysOnTop: mainWindow.isAlwaysOnTop(),
+    closeToTray: currentCloseToTray,
+    launchAtStartup: currentLaunchAtStartup,
     fontSizeScale: currentFontSizeScale,
     themeId: currentThemeId,
     languageId: currentLanguageId,
@@ -259,6 +286,127 @@ const keepWindowVisible = () => {
     mainWindow.setBounds(visible);
   }
   saveWindowState();
+};
+
+const getTrayIconPath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, TRAY_ICON_FILE)
+    : path.resolve(__dirname, '../../resources', TRAY_ICON_FILE);
+
+const getSquirrelLauncherOptions = (openAtLogin: boolean) =>
+  getSquirrelLoginItemOptions(process.execPath, openAtLogin);
+
+const isWindowsStartupAvailable = () => {
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  try {
+    return fs.existsSync(getSquirrelLauncherOptions(false).path);
+  } catch {
+    return false;
+  }
+};
+
+const readWindowsStartupEnabled = () => {
+  if (!isWindowsStartupAvailable()) return false;
+  try {
+    const options = getSquirrelLauncherOptions(false);
+    const settings = app.getLoginItemSettings(options);
+    return settings.executableWillLaunchAtLogin ?? settings.openAtLogin;
+  } catch {
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '无法读取 Windows 开机启动状态，请稍后重试。',
+      ),
+    );
+  }
+};
+
+const getDesktopSettings = (): DesktopSettings => {
+  const startupAvailable = isWindowsStartupAvailable();
+  currentLaunchAtStartup = startupAvailable
+    ? readWindowsStartupEnabled()
+    : false;
+  return {
+    closeToTray: currentCloseToTray,
+    launchAtStartup: currentLaunchAtStartup,
+    startupAvailable,
+  };
+};
+
+const refreshTrayMenu = () => {
+  if (!tray || tray.isDestroyed()) return;
+  const labels = getTrayMenuLabels(currentLanguageId);
+  const mainWindowVisible = Boolean(
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    mainWindow.isVisible() &&
+    !mainWindow.isMinimized(),
+  );
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: mainWindowVisible ? labels.hide : labels.show,
+        click: () => {
+          if (mainWindowVisible) {
+            mainWindow?.hide();
+            refreshTrayMenu();
+          } else {
+            showMainWindow();
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: labels.addTask,
+        click: () => runTrayAction('quick-task'),
+      },
+      { label: labels.planner, click: () => runTrayAction('week') },
+      { label: labels.settings, click: () => runTrayAction('settings') },
+      { type: 'separator' },
+      { label: labels.quit, click: quitApplication },
+    ]),
+  );
+};
+
+const showMainWindow = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+  refreshTrayMenu();
+};
+
+const runTrayAction = (action: TrayAction) => {
+  showMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindowReady) {
+    pendingTrayAction = action;
+    return;
+  }
+  mainWindow.webContents.send('desktop:tray-action', action);
+};
+
+const createTray = () => {
+  if (tray && !tray.isDestroyed()) return;
+  const icon = nativeImage.createFromPath(getTrayIconPath());
+  if (icon.isEmpty()) {
+    throw new Error(
+      `The Daybyday tray icon could not be loaded: ${getTrayIconPath()}`,
+    );
+  }
+  tray = new Tray(icon);
+  tray.setToolTip('Daybyday');
+  refreshTrayMenu();
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+};
+
+const quitApplication = () => {
+  isQuitting = true;
+  saveWindowState();
+  app.quit();
 };
 
 const registerOcrProtocol = () => {
@@ -432,13 +580,92 @@ const registerWindowControls = () => {
     currentLanguageId = parseLanguageId(value);
     if (!saveWindowState()) {
       currentLanguageId = previousValue;
+      refreshTrayMenu();
       throw new Error(
         '语言设置未能保存到本机，请检查用户数据目录写入权限后重试。',
       );
     }
+    refreshTrayMenu();
     broadcastPreferences();
     return currentLanguageId;
   });
+  ipcMain.handle('settings:get-desktop', (event) => {
+    getTrustedWindow(event);
+    return getDesktopSettings();
+  });
+  ipcMain.handle('settings:set-close-to-tray', (event, enabled: unknown) => {
+    getTrustedWindow(event);
+    if (typeof enabled !== 'boolean') throw new Error('关闭到托盘选项无效。');
+    const previousValue = currentCloseToTray;
+    currentCloseToTray = enabled;
+    if (!saveWindowState()) {
+      currentCloseToTray = previousValue;
+      throw new Error(
+        '窗口设置未能保存到本机，请检查用户数据目录写入权限后重试。',
+      );
+    }
+    return currentCloseToTray;
+  });
+  ipcMain.handle(
+    'settings:set-launch-at-startup',
+    (event, enabled: unknown) => {
+      getTrustedWindow(event);
+      if (typeof enabled !== 'boolean')
+        throw new Error('Windows 开机启动选项无效。');
+      if (!isWindowsStartupAvailable()) {
+        throw new Error(
+          translateForLanguage(
+            currentLanguageId,
+            '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
+          ),
+        );
+      }
+
+      const previousValue = readWindowsStartupEnabled();
+      const options = getSquirrelLauncherOptions(enabled);
+      const restorePreviousSetting = () => {
+        try {
+          app.setLoginItemSettings({
+            ...getSquirrelLauncherOptions(previousValue),
+            enabled: true,
+          });
+        } catch {
+          // Best effort if Windows no longer permits this change.
+        }
+      };
+      let actualValue: boolean;
+      try {
+        app.setLoginItemSettings({ ...options, enabled: true });
+        actualValue = readWindowsStartupEnabled();
+      } catch {
+        restorePreviousSetting();
+        throw new Error(
+          translateForLanguage(
+            currentLanguageId,
+            '无法更新 Windows 开机启动设置，请检查安装位置和当前用户权限后重试。',
+          ),
+        );
+      }
+      if (actualValue !== enabled) {
+        restorePreviousSetting();
+        throw new Error(
+          translateForLanguage(
+            currentLanguageId,
+            '无法更新 Windows 开机启动设置，请检查安装位置和当前用户权限后重试。',
+          ),
+        );
+      }
+      currentLaunchAtStartup = actualValue;
+      if (!saveWindowState()) {
+        currentLaunchAtStartup = previousValue;
+        restorePreviousSetting();
+        throw new Error(
+          '窗口设置未能保存到本机，请检查用户数据目录写入权限后重试。',
+        );
+      }
+      return getDesktopSettings();
+    },
+  );
 
   ipcMain.handle('planner:get-day', (event, date: unknown) => {
     getTrustedWindow(event);
@@ -634,9 +861,12 @@ const registerWindowControls = () => {
 
 const createWindow = () => {
   const savedState = readWindowState();
+  mainWindowReady = false;
   currentFontSizeScale = savedState.fontSizeScale;
   currentThemeId = savedState.themeId;
   currentLanguageId = savedState.languageId;
+  currentCloseToTray = savedState.closeToTray;
+  currentLaunchAtStartup = savedState.launchAtStartup;
   const bounds = getInitialBounds(savedState);
   const options: BrowserWindowConstructorOptions = {
     title: 'Daybyday',
@@ -659,13 +889,33 @@ const createWindow = () => {
   mainWindow.setAlwaysOnTop(savedState.alwaysOnTop);
 
   mainWindow.once('ready-to-show', () => {
+    mainWindowReady = true;
     mainWindow?.show();
+    if (pendingTrayAction && mainWindow) {
+      const action = pendingTrayAction;
+      pendingTrayAction = undefined;
+      mainWindow.webContents.send('desktop:tray-action', action);
+    }
+    refreshTrayMenu();
   });
   mainWindow.on('move', scheduleWindowStateSave);
   mainWindow.on('resize', scheduleWindowStateSave);
-  mainWindow.once('close', saveWindowState);
+  mainWindow.on('minimize', refreshTrayMenu);
+  mainWindow.on('restore', refreshTrayMenu);
+  mainWindow.on('show', refreshTrayMenu);
+  mainWindow.on('hide', refreshTrayMenu);
+  mainWindow.on('close', (event) => {
+    saveWindowState();
+    if (currentCloseToTray && !isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+      refreshTrayMenu();
+    }
+  });
   mainWindow.once('closed', () => {
     mainWindow = undefined;
+    mainWindowReady = false;
+    refreshTrayMenu();
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -678,20 +928,28 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  if (started || !hasSingleInstanceLock) return;
   registerOcrProtocol();
   registerWindowControls();
   createWindow();
+  try {
+    createTray();
+  } catch (error) {
+    console.error('Could not create the Daybyday system tray icon.', error);
+  }
 
   screen.on('display-metrics-changed', keepWindowVisible);
   screen.on('display-removed', keepWindowVisible);
   screen.on('display-added', keepWindowVisible);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    showMainWindow();
   });
 });
+
+if (hasSingleInstanceLock && !started) {
+  app.on('second-instance', showMainWindow);
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -700,6 +958,14 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+  }
+  saveWindowState();
+  tray?.destroy();
+  tray = undefined;
   plannerDatabase?.close();
   plannerDatabase = undefined;
 });

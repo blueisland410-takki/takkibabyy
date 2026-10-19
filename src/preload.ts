@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Course,
   CourseExceptionInput,
+  DesktopSettings,
   ClassPeriodTime,
   CourseImportAnalysis,
   CourseImportDecision,
@@ -20,6 +21,7 @@ import type {
   FontSizeScale,
   LanguageId,
   ThemeId,
+  TrayAction,
   MoveDirection,
   Semester,
   SemesterInput,
@@ -65,6 +67,25 @@ contextBridge.exposeInMainWorld('dayByDay', {
     ipcRenderer.invoke('window:toggle-always-on-top'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  getDesktopSettings: (): Promise<DesktopSettings> =>
+    ipcRenderer.invoke('settings:get-desktop'),
+  setCloseToTray: (enabled: boolean): Promise<boolean> => {
+    if (typeof enabled !== 'boolean') throw new Error('关闭到托盘选项无效。');
+    return ipcRenderer.invoke('settings:set-close-to-tray', enabled);
+  },
+  setLaunchAtStartup: (enabled: boolean): Promise<DesktopSettings> => {
+    if (typeof enabled !== 'boolean')
+      throw new Error('Windows 开机启动选项无效。');
+    return ipcRenderer.invoke('settings:set-launch-at-startup', enabled);
+  },
+  onTrayAction: (callback: (action: TrayAction) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (value === 'quick-task' || value === 'week' || value === 'settings')
+        callback(value);
+    };
+    ipcRenderer.on('desktop:tray-action', listener);
+    return () => ipcRenderer.removeListener('desktop:tray-action', listener);
+  },
   setImportWindowMode: (enabled: boolean): Promise<void> => {
     if (typeof enabled !== 'boolean') throw new Error('导入页面窗口选项无效。');
     return ipcRenderer.invoke('window:set-import-mode', enabled);
