@@ -1,3 +1,4 @@
+import { t, translateSystemMessage } from './i18n';
 import {
   useEffect,
   useMemo,
@@ -26,6 +27,7 @@ import {
   type ImportColumn,
   type TabularParseResult,
 } from './importParsers';
+import { formatDate, formatWeekdayNames } from './i18n';
 
 type Props = {
   semester: Semester;
@@ -34,15 +36,6 @@ type Props = {
   onImported: () => void;
 };
 
-const weekDays = [
-  '星期一',
-  '星期二',
-  '星期三',
-  '星期四',
-  '星期五',
-  '星期六',
-  '星期日',
-];
 const recurrenceOptions: Array<[RecurrenceType, string]> = [
   ['ALL', '每周'],
   ['ODD', '单周'],
@@ -178,6 +171,7 @@ export function StructuredImport({
   onClose,
   onImported,
 }: Props) {
+  const weekDays = formatWeekdayNames();
   const [file, setFile] = useState<File | null>(null);
   const [buffer, setBuffer] = useState<ArrayBuffer | null>(null);
   const [contentHash, setContentHash] = useState('');
@@ -473,10 +467,17 @@ export function StructuredImport({
         ),
       );
       setSuccess(
-        `检查完成：${activeDrafts.length} 条记录，${result.duplicates.length} 条可能重复，${result.conflicts.length} 处时间冲突。`,
+        t(
+          '检查完成：{{count}} 条记录，{{duplicates}} 条可能重复，{{conflicts}} 处时间冲突。',
+          {
+            count: activeDrafts.length,
+            duplicates: result.duplicates.length,
+            conflicts: result.conflicts.length,
+          },
+        ),
       );
     } catch (failure) {
-      setError(`检查失败：${errorText(failure)}`);
+      setError(t('检查失败：{{message}}', { message: errorText(failure) }));
     } finally {
       setBusy(false);
     }
@@ -486,7 +487,13 @@ export function StructuredImport({
     if (!analysis || busy) return;
     if (
       !window.confirm(
-        `将 ${activeDrafts.length} 条已校对内容导入“${semester.semesterName}”。可能重复项默认跳过；不会覆盖已有课程或调课。继续吗？`,
+        t(
+          '将 {{count}} 条已校对内容导入“{{semester}}”。可能重复项默认跳过；不会覆盖已有课程或调课。继续吗？',
+          {
+            count: activeDrafts.length,
+            semester: semester.semesterName,
+          },
+        ),
       )
     )
       return;
@@ -505,12 +512,23 @@ export function StructuredImport({
       );
       setAnalysis(null);
       setSuccess(
-        `导入完成：新增 ${result.importedCount} 门课程、${result.importedEventCount} 条日程，跳过 ${result.skippedCount} 条重复内容。`,
+        t(
+          '导入完成：新增 {{courses}} 门课程、{{events}} 条日程，跳过 {{skipped}} 条重复内容。',
+          {
+            courses: result.importedCount,
+            events: result.importedEventCount,
+            skipped: result.skippedCount,
+          },
+        ),
       );
       await refreshBatches();
       onImported();
     } catch (failure) {
-      setError(`导入失败，原有课程和日程保持不变：${errorText(failure)}`);
+      setError(
+        t('导入失败，原有课程和日程保持不变：{{message}}', {
+          message: errorText(failure),
+        }),
+      );
       setAnalysis(null);
     } finally {
       setBusy(false);
@@ -519,19 +537,28 @@ export function StructuredImport({
 
   const undoBatch = async (batchId: string) => {
     if (busy) return;
-    if (!window.confirm('仅撤销该批次新增且此后未编辑的课程和日程。继续吗？'))
+    if (
+      !window.confirm(t('仅撤销该批次新增且此后未编辑的课程和日程。继续吗？'))
+    )
       return;
     setBusy(true);
     setError('');
     try {
       const result = await window.dayByDay.undoImportBatch(batchId);
       setSuccess(
-        `批次已撤销：移除 ${result.removedCourseCount} 门课程、${result.removedEventCount} 条日程；${result.retainedItemCount} 项因导入后有修改而保留。`,
+        t(
+          '批次已撤销：移除 {{courses}} 门课程、{{events}} 条日程；{{retained}} 项因导入后有修改而保留。',
+          {
+            courses: result.removedCourseCount,
+            events: result.removedEventCount,
+            retained: result.retainedItemCount,
+          },
+        ),
       );
       await refreshBatches();
       onImported();
     } catch (failure) {
-      setError(`撤销失败：${errorText(failure)}`);
+      setError(t('撤销失败：{{message}}', { message: errorText(failure) }));
     } finally {
       setBusy(false);
     }
@@ -557,16 +584,16 @@ export function StructuredImport({
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (failure) {
-      setError(`模板生成失败：${errorText(failure)}`);
+      setError(t('模板生成失败：{{message}}', { message: errorText(failure) }));
     }
   };
 
   const formatLabel =
     sourceType === 'ICS'
-      ? 'iCalendar'
+      ? t('iCalendar')
       : sourceType === 'XLSX'
-        ? 'Excel 工作簿'
-        : 'CSV 表格';
+        ? t('Excel 工作簿')
+        : t('CSV 表格');
   const accepts =
     sourceType === 'ICS'
       ? '.ics,text/calendar'
@@ -578,13 +605,13 @@ export function StructuredImport({
   return (
     <section
       className="structured-import"
-      aria-label={`${formatLabel}导入预览`}
+      aria-label={t('{{format}} import preview', { format: formatLabel })}
     >
       <div className="structured-import-topline">
         <div>
           <span className="structured-format-pill">{formatLabel}</span>
           <span className="structured-file-name">
-            {file?.name ?? '选择本地文件'}
+            {file?.name ?? t('选择本地文件')}
           </span>
         </div>
         <button
@@ -592,7 +619,7 @@ export function StructuredImport({
           type="button"
           onClick={onClose}
         >
-          返回课程列表
+          {t('返回课程列表')}
         </button>
       </div>
 
@@ -612,9 +639,13 @@ export function StructuredImport({
             onDrop={dropFile}
             type="button"
           >
-            <strong>点击选择或拖入 {formatLabel} 文件</strong>
+            <strong>
+              {t('点击选择或拖入')} {formatLabel} {t('文件')}
+            </strong>
             <span>
-              文件仅在本机临时读取，不上传，也不会保存到数据库。最大 25 MB。
+              {t(
+                '文件仅在本机临时读取，不上传，也不会保存到数据库。最大 25 MB。',
+              )}
             </span>
           </button>
           {sourceType !== 'ICS' && (
@@ -624,14 +655,14 @@ export function StructuredImport({
                 onClick={() => void downloadTemplate('xlsx')}
                 type="button"
               >
-                下载 Excel 模板
+                {t('下载 Excel 模板')}
               </button>
               <button
                 className="quiet-button compact-button"
                 onClick={() => void downloadTemplate('csv')}
                 type="button"
               >
-                下载 CSV 模板
+                {t('下载 CSV 模板')}
               </button>
             </div>
           )}
@@ -645,7 +676,7 @@ export function StructuredImport({
             onClick={() => fileInput.current?.click()}
             type="button"
           >
-            重新选择
+            {t('重新选择')}
           </button>
           <button
             className="quiet-button compact-button"
@@ -660,7 +691,7 @@ export function StructuredImport({
             }}
             type="button"
           >
-            清除文件
+            {t('清除文件')}
           </button>
           <input
             accept={accepts}
@@ -670,14 +701,15 @@ export function StructuredImport({
             type="file"
           />
           <span>
-            目标学期：{semester.semesterName} · {semesterWeekCount(semester)} 周
+            {t('目标学期：')}
+            {semester.semesterName} · {semesterWeekCount(semester)} {t('周')}
           </span>
         </div>
       )}
 
       {sourceType === 'CSV' && file && (
         <label className="structured-option-label">
-          CSV 编码
+          {t('CSV 编码')}
           <select
             disabled={busy}
             onChange={(event) => {
@@ -686,8 +718,10 @@ export function StructuredImport({
             }}
             value={encoding}
           >
-            <option value="utf-8">UTF-8</option>
-            <option value="gb18030">GB18030 / 常见简体中文 Windows CSV</option>
+            <option value="utf-8">{t('UTF-8')}</option>
+            <option value="gb18030">
+              {t('GB18030 / 常见简体中文 Windows CSV')}
+            </option>
           </select>
         </label>
       )}
@@ -695,7 +729,7 @@ export function StructuredImport({
       {tableResult && sourceType === 'XLSX' && (
         <div className="structured-table-options">
           <label className="structured-option-label">
-            工作表
+            {t('工作表')}
             <select
               disabled={busy}
               onChange={(event) => {
@@ -713,7 +747,7 @@ export function StructuredImport({
             </select>
           </label>
           <label className="structured-option-label">
-            表头行
+            {t('表头行')}
             <input
               disabled={busy}
               max={100}
@@ -731,11 +765,11 @@ export function StructuredImport({
 
       {tableResult && sourceType !== 'ICS' && (
         <details className="column-mapping-panel">
-          <summary>列映射（无法自动识别表头时在这里调整）</summary>
+          <summary>{t('列映射（无法自动识别表头时在这里调整）')}</summary>
           <div className="column-mapping-grid">
             {columnOptions.map(([field, label]) => (
               <label key={field}>
-                {label}
+                {t(label)}
                 <select
                   disabled={busy}
                   onChange={(event) => {
@@ -756,7 +790,7 @@ export function StructuredImport({
                       : (mapping[field] ?? '')
                   }
                 >
-                  <option value="">不映射</option>
+                  <option value="">{t('不映射')}</option>
                   {tableResult.headers.map((header, index) => (
                     <option key={`${index}-${header}`} value={index}>
                       {header || `第 ${index + 1} 列`}
@@ -774,30 +808,33 @@ export function StructuredImport({
           className={`import-message ${error ? 'import-error' : 'import-success'}`}
           role={error ? 'alert' : 'status'}
         >
-          <span>{error || success}</span>
+          <span>{translateSystemMessage(error || success)}</span>
           {error && (
             <button
               className="retry-button"
               onClick={() => setError('')}
               type="button"
             >
-              知道了
+              {t('知道了')}
             </button>
           )}
         </div>
       )}
 
       {batches.length > 0 && (
-        <section className="import-batch-history" aria-label="导入记录">
-          <strong>最近导入记录</strong>
+        <section className="import-batch-history" aria-label={t('导入记录')}>
+          <strong>{t('最近导入记录')}</strong>
           {batches.map((batch) => (
             <div className="import-batch-row" key={batch.id}>
               <span>
                 {batch.sourceLabel} ·{' '}
-                {new Date(batch.createdAt).toLocaleString()} ·{' '}
-                {batch.importedCourseCount} 门课程 / {batch.importedEventCount}{' '}
-                条日程
-                {batch.undoneAt ? ' · 已撤销' : ''}
+                {formatDate(new Date(batch.createdAt), {
+                  dateStyle: 'short',
+                  timeStyle: 'short',
+                })}{' '}
+                · {batch.importedCourseCount} {t('门课程 /')}{' '}
+                {batch.importedEventCount} {t('条日程')}
+                {batch.undoneAt ? t(' · 已撤销') : ''}
               </span>
               {!batch.undoneAt &&
                 batch.importedCourseCount + batch.importedEventCount > 0 && (
@@ -807,7 +844,7 @@ export function StructuredImport({
                     onClick={() => void undoBatch(batch.id)}
                     type="button"
                   >
-                    撤销此批次
+                    {t('撤销此批次')}
                   </button>
                 )}
             </div>
@@ -817,38 +854,42 @@ export function StructuredImport({
 
       {file && (
         <div className="structured-counts">
-          <span>识别 {seenCount} 项</span>
           <span>
-            待确认{' '}
+            {t('识别')} {seenCount} {t('项')}
+          </span>
+          <span>
+            {t('待确认')}{' '}
             {
               activeDrafts.filter(
                 (draft) => draftErrors(draft, semester).length > 0,
               ).length
             }{' '}
-            项
+            {t('项')}
           </span>
-          <span>目标学期 {semester.semesterName}</span>
+          <span>
+            {t('目标学期')} {semester.semesterName}
+          </span>
         </div>
       )}
 
       {parseWarnings.length > 0 && (
         <ul className="structured-warning-list">
           {parseWarnings.map((warning, index) => (
-            <li key={`${index}-${warning}`}>{warning}</li>
+            <li key={`${index}-${warning}`}>{t(warning)}</li>
           ))}
         </ul>
       )}
 
       {file && (
         <div className="structured-draft-toolbar">
-          <strong>校对内容</strong>
+          <strong>{t('校对内容')}</strong>
           <div>
             <button
               className="quiet-button compact-button"
               onClick={() => addManual('course')}
               type="button"
             >
-              ＋ 添加课程
+              {t('＋ 添加课程')}
             </button>
             {sourceType === 'ICS' && (
               <button
@@ -856,7 +897,7 @@ export function StructuredImport({
                 onClick={() => addManual('event')}
                 type="button"
               >
-                ＋ 添加日程
+                {t('＋ 添加日程')}
               </button>
             )}
           </div>
@@ -889,10 +930,10 @@ export function StructuredImport({
                     }
                     type="checkbox"
                   />
-                  導入
+                  {t('导入')}
                 </label>
                 <select
-                  aria-label="导入为课程或日程"
+                  aria-label={t('导入为课程或日程')}
                   className="draft-kind-select"
                   onChange={(event) =>
                     updateDraft(draft.id, {
@@ -903,11 +944,11 @@ export function StructuredImport({
                   }
                   value={draft.kind}
                 >
-                  <option value="course">课程</option>
-                  <option value="event">单次日程</option>
+                  <option value="course">{t('课程')}</option>
+                  <option value="event">{t('单次日程')}</option>
                 </select>
                 <button
-                  aria-label={`删除 ${draft.courseName || '未命名记录'}`}
+                  aria-label={`${t('删除')} ${draft.courseName || t('未命名记录')}`}
                   className="row-action delete-action"
                   onClick={() => removeDraft(draft.id)}
                   type="button"
@@ -919,12 +960,12 @@ export function StructuredImport({
                     errors.length ? 'course-review-state' : 'course-ready-state'
                   }
                 >
-                  {errors.length ? '待确认' : '已完整'}
+                  {t(errors.length ? '待确认' : '已完整')}
                 </span>
               </div>
               <div className="import-field-grid">
                 <label className="wide-field">
-                  {draft.kind === 'course' ? '课程名称' : '日程标题'}
+                  {t(draft.kind === 'course' ? '课程名称' : '日程标题')}
                   <input
                     onChange={(event) =>
                       updateDraft(draft.id, { courseName: event.target.value })
@@ -935,7 +976,7 @@ export function StructuredImport({
                 {draft.kind === 'course' ? (
                   <>
                     <label>
-                      星期
+                      {t('星期')}
                       <select
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -944,7 +985,7 @@ export function StructuredImport({
                         }
                         value={draft.weekday ?? ''}
                       >
-                        <option value="">待确认</option>
+                        <option value="">{t('待确认')}</option>
                         {weekDays.map((day, dayIndex) => (
                           <option key={day} value={dayIndex + 1}>
                             {day}
@@ -953,7 +994,7 @@ export function StructuredImport({
                       </select>
                     </label>
                     <label>
-                      重复规则
+                      {t('重复规则')}
                       <select
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -963,16 +1004,16 @@ export function StructuredImport({
                         }
                         value={draft.recurrenceType ?? ''}
                       >
-                        <option value="">待确认</option>
+                        <option value="">{t('待确认')}</option>
                         {recurrenceOptions.map(([value, label]) => (
                           <option key={value} value={value}>
-                            {label}
+                            {t(label)}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label>
-                      开始时间
+                      {t('开始时间')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -984,7 +1025,7 @@ export function StructuredImport({
                       />
                     </label>
                     <label>
-                      结束时间
+                      {t('结束时间')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -996,7 +1037,7 @@ export function StructuredImport({
                       />
                     </label>
                     <label>
-                      开始周次
+                      {t('开始周次')}
                       <input
                         max={semesterWeekCount(semester)}
                         min={1}
@@ -1010,7 +1051,7 @@ export function StructuredImport({
                       />
                     </label>
                     <label>
-                      结束周次
+                      {t('结束周次')}
                       <input
                         max={semesterWeekCount(semester)}
                         min={1}
@@ -1025,7 +1066,7 @@ export function StructuredImport({
                     </label>
                     {draft.recurrenceType === 'CUSTOM' && (
                       <label className="custom-weeks-field">
-                        指定周次（逗号分隔）
+                        {t('指定周次（逗号分隔）')}
                         <input
                           onChange={(event) =>
                             updateDraft(draft.id, {
@@ -1038,13 +1079,13 @@ export function StructuredImport({
                               ].sort((a, b) => a - b),
                             })
                           }
-                          placeholder="例如：1, 3, 8, 12"
+                          placeholder={t('例如：1, 3, 8, 12')}
                           value={draft.customWeeks.join(', ')}
                         />
                       </label>
                     )}
                     <label>
-                      教室
+                      {t('教室')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -1055,7 +1096,7 @@ export function StructuredImport({
                       />
                     </label>
                     <label>
-                      教师
+                      {t('教师')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, { teacher: event.target.value })
@@ -1067,7 +1108,7 @@ export function StructuredImport({
                 ) : (
                   <>
                     <label>
-                      日期
+                      {t('日期')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -1079,7 +1120,7 @@ export function StructuredImport({
                       />
                     </label>
                     <label>
-                      地点
+                      {t('地点')}
                       <input
                         onChange={(event) =>
                           updateDraft(draft.id, {
@@ -1100,13 +1141,13 @@ export function StructuredImport({
                           }
                           type="checkbox"
                         />
-                        全天事件
+                        {t('全天事件')}
                       </span>
                     </label>
                     {!draft.isAllDay && (
                       <>
                         <label>
-                          开始时间
+                          {t('开始时间')}
                           <input
                             onChange={(event) =>
                               updateDraft(draft.id, {
@@ -1118,7 +1159,7 @@ export function StructuredImport({
                           />
                         </label>
                         <label>
-                          结束时间
+                          {t('结束时间')}
                           <input
                             onChange={(event) =>
                               updateDraft(draft.id, {
@@ -1134,7 +1175,7 @@ export function StructuredImport({
                   </>
                 )}
                 <label className="wide-field">
-                  备注
+                  {t('备注')}
                   <textarea
                     onChange={(event) =>
                       updateDraft(draft.id, { notes: event.target.value })
@@ -1146,20 +1187,21 @@ export function StructuredImport({
               {errors.length > 0 && (
                 <ul className="course-field-errors">
                   {errors.map((message) => (
-                    <li key={message}>{message}</li>
+                    <li key={message}>{t(message)}</li>
                   ))}
                 </ul>
               )}
               {draft.warnings.length > 0 && (
                 <ul className="structured-warning-list">
                   {draft.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
+                    <li key={warning}>{t(warning)}</li>
                   ))}
                 </ul>
               )}
               {duplicate && (
                 <div className="duplicate-choice">
-                  可能重复：{duplicate.title}
+                  {t('可能重复：')}
+                  {duplicate.title}
                   <select
                     onChange={(event) =>
                       setDuplicateActions((previous) => ({
@@ -1169,15 +1211,16 @@ export function StructuredImport({
                     }
                     value={duplicateActions[draft.id] ?? 'skip'}
                   >
-                    <option value="skip">跳过</option>
-                    <option value="keep">仍然导入</option>
+                    <option value="skip">{t('跳过')}</option>
+                    <option value="keep">{t('仍然导入')}</option>
                   </select>
                 </div>
               )}
               {conflict && (
                 <div className="conflict-warning">
-                  存在时间冲突：{conflict.firstCourseName} /{' '}
-                  {conflict.secondCourseName}。可以校对后继续。
+                  {t('存在时间冲突：')}
+                  {conflict.firstCourseName} / {conflict.secondCourseName}
+                  {t('。可以校对后继续。')}
                 </div>
               )}
               <label className="review-confirm">
@@ -1188,19 +1231,19 @@ export function StructuredImport({
                   }
                   type="checkbox"
                 />
-                我已确认这条记录的类别、时间和周次
+                {t('我已确认这条记录的类别、时间和周次')}
               </label>
               <details className="course-raw-details">
-                <summary>查看来源信息和原始文本</summary>
+                <summary>{t('查看来源信息和原始文本')}</summary>
                 <small>
                   {draft.sourceLabel} · {draft.sourceType} · {draft.sourceId}
                 </small>
-                <pre>{draft.rawText || '无可用原始文本'}</pre>
+                <pre>{draft.rawText || t('无可用原始文本')}</pre>
               </details>
               {draft.exceptions.length > 0 && (
                 <p className="exception-import-note">
-                  该课程将一并导入 {draft.exceptions.length}{' '}
-                  条单次停课/调课例外。
+                  {t('该课程将一并导入')} {draft.exceptions.length}{' '}
+                  {t('条单次停课/调课例外。')}
                 </p>
               )}
             </article>
@@ -1210,7 +1253,9 @@ export function StructuredImport({
 
       {file && drafts.length === 0 && !busy && (
         <div className="empty-state planner-card">
-          没有解析出课程或日程。可以调整工作表/表头/列映射后重新解析，或手动添加课程。
+          {t(
+            '没有解析出课程或日程。可以调整工作表/表头/列映射后重新解析，或手动添加课程。',
+          )}
         </div>
       )}
 
@@ -1218,8 +1263,11 @@ export function StructuredImport({
         <div className="structured-import-footer">
           <span>
             {busy
-              ? '正在读取或检查文件…'
-              : `${activeDrafts.length} 条选中 · ${invalidDrafts.length} 条仍待确认`}
+              ? t('正在读取或检查文件…')
+              : t('{{selected}} selected · {{review}} need review', {
+                  selected: activeDrafts.length,
+                  review: invalidDrafts.length,
+                })}
           </span>
           {analysis ? (
             <button
@@ -1230,7 +1278,9 @@ export function StructuredImport({
               onClick={() => void importConfirmed()}
               type="button"
             >
-              {busy ? '正在写入…' : `确认导入 ${activeDrafts.length} 条`}
+              {busy
+                ? t('正在写入…')
+                : t('确认导入 {{count}} 条', { count: activeDrafts.length })}
             </button>
           ) : (
             <button
@@ -1241,7 +1291,7 @@ export function StructuredImport({
               onClick={() => void analyze()}
               type="button"
             >
-              {busy ? '正在检查…' : '检查重复与冲突'}
+              {busy ? t('正在检查…') : t('检查重复与冲突')}
             </button>
           )}
         </div>

@@ -3,6 +3,7 @@ import type {
   CourseExceptionInput,
   CourseInput,
   FontSizeScale,
+  LanguageId,
   ThemeId,
   ImportBatchDecision,
   ImportBatchPayload,
@@ -40,6 +41,18 @@ export function parseFontSizeScale(value: unknown): FontSizeScale {
 export function parseThemeId(value: unknown): ThemeId {
   if (isThemeId(value)) return value;
   throw new Error('主题选项无效。');
+}
+
+export function parseLanguageId(value: unknown): LanguageId {
+  if (
+    value === 'zh-CN' ||
+    value === 'zh-TW' ||
+    value === 'ja-JP' ||
+    value === 'ko-KR' ||
+    value === 'en-US'
+  )
+    return value;
+  throw new Error('应用语言选项无效。');
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

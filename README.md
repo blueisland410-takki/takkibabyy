@@ -68,6 +68,30 @@ npm start
 - **Semester Planner** 管理学期及课程。
 - 临时日程和课程按时间排列，全天临时日程放在最上方。待办仍按日期单独保存。
 
+## 字体与窗口
+
+新安装默认使用 440 × 680 的窗口；已经保存过的窗口位置、大小和置顶状态会继续恢复，不会因升级而被覆盖。窗口仍可拖动和缩放。
+
+顶部 **Settings** → **Font size** 可选 100%、115%、125% 或 150%。设置保存到 Electron 用户数据目录中的窗口设置文件，重启后继续生效。若旧窗口尺寸较小，Settings 会提示可以拖动边缘扩大；软件不会擅自改写你保存的尺寸。文字变大后主内容、课程卡片和弹窗可换行并滚动。
+
+**Settings → Appearance → Theme Color** 提供九套主题。**Soft & Muted** 包含 Classic、Dusty Rose、Sage Green、Misty Blue、Muted Lavender 和 Oat Beige；**Pop & Playful** 包含 Mint Pop、Sapphire 和 Y2K Pink。点击后立即预览，关闭并重启应用后仍会保留；**Reset to default** 可恢复 Classic。普通文字保持深色；薄荷绿和粉色强调按钮使用深色文字，宝石蓝使用白色文字，并由自动化测试检查对比度。
+
+**Settings → Language → App Language** 可即时切换简体中文、繁體中文、日本語、한국어和 English；选项始终显示各语言的本地名称。界面日期和星期随语言格式化，课程、待办、备注、教师/教室名称及导入原文均保持用户输入内容。主题、语言、字号比例与窗口位置、大小及置顶偏好保存在 `%APPDATA%\DayByDay\window-state.json`，不会写入 SQLite 或更改课程、待办和日程。旧设置缺少语言字段时默认使用简体中文。
+
+应用语言资源位于 `locales/zh-CN.json`、`locales/zh-TW.json`、`locales/ja-JP.json`、`locales/ko-KR.json` 和 `locales/en-US.json`。五份资源使用同一组翻译键；页面切换不改变 OCR 语言、教学周次、单双周规则或本地日期计算。未收录的底层错误在非简体中文界面显示通用重试提示，避免把简体中文错误直接混入其他语言；简体中文保留原始详细错误，新增用户可见错误时应同步补充各语言资源。
+
+全应用字号由 CSS 字体变量统一管理：说明文字最低 13px，按钮约 15px，正文约 16px，栏目标题约 19px，主标题约 24px；所选比例会统一应用到今日视图、周视图、学期管理和导入校对页面。Electron 窗口按 Windows 逻辑像素布局，适配 125% / 150% 显示缩放；实际显示效果仍建议在目标电脑上查看。
+
+## 手机教务课表结构预览（Phase 5.2 当前完成范围）
+
+在 **Semester Planner → Import timetable → Mobile Timetable** 选择手机课表截图，然后点击 **Recognize**。此模式先用 OCR 坐标寻找教学周、星期表头和左侧节次编号，再在表格网格内检测彩色矩形区域，并将矩形内已有 OCR 文字按坐标关联。图像检测会先缩小到最长边不超过 900 像素，避免对高分辨率截图同步扫描全部像素。图片仅在本机页面和本地 OCR Worker 中处理。
+
+此阶段只输出结构预览，不写入课程数据库。识别到“第 8 周”只表示截图当前显示第 8 周，不会据此推断全学期每周规则；缺少学校作息模板时只保留节次，不生成钟点。左右缺列、星期/节次不清楚、色块文字断行或色块边界相连时会显示警告，需人工核对。
+
+手机课表真实回归测试目录为 `tests/fixtures/mobile-timetable/`。当前目录包含用户提供的预期答案结构和测试说明，但还没有真实截图；测试使用代码生成的合成图片，只验证 8 个预期矩形区域的网格定位、周次以及星期/节次映射，不衡量真实 OCR 名称、教师或教室准确率。将脱敏后的真实截图放入该目录后，才能评估你学校的实际布局。
+
+普通 **Import from image** 仍保留第五阶段原有的基于文字坐标分组流程；本次没有移除它，也没有宣称其课程文字识别准确率已提升。手机模式的逐块 OCR、教师/教室字段解析、网格手动校准、单周/整学期导入范围确认及完整校对窗口属于后续步骤，当前不得直接导入正式课程。
+
 ## 本地数据库与备份
 
 SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上通常为：
@@ -93,14 +117,17 @@ npm run package
 
 自动化测试对系统临时目录中的独立数据库执行，会在测试结束后清理；不会访问正式用户数据库。`npm run package` 生成打包目录；Windows 安装程序制作仍需单独验证。
 
+若打包时在 `Copying files` 步骤出现网络 `fetch failed`，而项目 `.electron-cache` 内已有匹配版本的 Electron ZIP，可在当前 PowerShell 窗口指定本地 ZIP 目录后重试：
+
+```powershell
+$env:DAYBYDAY_ELECTRON_ZIP_DIR = (Resolve-Path .\.electron-cache).Path
+npm run package
+```
+
+该环境变量只影响当前 PowerShell 窗口，不会修改系统设置。本次 Phase 5.3 验证使用项目本地缓存成功完成打包。
+
 ## 安全设计
 
 Electron 窗口使用 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 中逐项列出的 API 请求主进程访问数据库；主进程会再次检查 IPC 来源和参数，页面不能运行 SQL。
 
 SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。Vite 将原生模块留在主进程包外，避免从生成目录寻找 `.node` 文件。课程截图通过本地 Tesseract.js 和受限白名单资源协议处理；没有云端 OCR、云同步或账号系统。
-
-## 字体、窗口和主题
-
-新安装默认使用 440 × 680 的窗口；已有窗口的位置、大小和置顶状态会继续恢复。顶部 **Settings → Font size** 可选 100%、115%、125% 或 150%，文字放大后页面仍可滚动。
-
-**Settings → Appearance → Theme Color** 提供 Classic、Dusty Rose、Sage Green、Misty Blue、Muted Lavender 和 Oat Beige。点击后立即预览，重启后保留；**Reset to default** 恢复 Classic。主题与字体、窗口及置顶偏好保存在 `%APPDATA%\DayByDay\window-state.json`，不写入 SQLite。浅色主题使用深色强调按钮文字，Classic 深色按钮使用白色文字。

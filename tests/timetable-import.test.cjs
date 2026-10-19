@@ -4,15 +4,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { afterEach, test } = require('node:test');
 const Tesseract = require('tesseract.js');
-const { PlannerDatabase } = require('../.test-output/database.js');
-const { analyzeCourseImport } = require('../.test-output/courseImport.js');
+const { PlannerDatabase } = require('../.test-output/src/database.js');
+const { analyzeCourseImport } = require('../.test-output/src/courseImport.js');
 const {
   parseWeekRule,
   parseTimetableLines,
   timeRangeForPeriods,
   ocrLinesFromBlocks,
-} = require('../.test-output/timetableParser.js');
-const { parseClassPeriodTimes } = require('../.test-output/validation.js');
+} = require('../.test-output/src/timetableParser.js');
+const { parseClassPeriodTimes } = require('../.test-output/src/validation.js');
 
 let temporaryDirectory;
 let database;

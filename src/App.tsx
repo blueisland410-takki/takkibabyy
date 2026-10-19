@@ -1,3 +1,4 @@
+import { t, translateSystemMessage } from './i18n';
 import {
   useCallback,
   useEffect,
@@ -14,6 +15,7 @@ import type {
   Event,
   EventInput,
   FontSizeScale,
+  LanguageId,
   ThemeId,
   Task,
   TaskInput,
@@ -21,6 +23,14 @@ import type {
 import { SemesterPlanner } from './SemesterPlanner';
 import { mergeAgendaItems } from './scheduleView';
 import { getThemeTokens, THEME_OPTIONS } from './theme';
+import {
+  formatDate,
+  formatDateKey,
+  formatTeachingWeek,
+  formatWeekdayLabels,
+  LANGUAGE_OPTIONS,
+  setActiveLanguage,
+} from './i18n';
 import './index.css';
 
 type Editor = { kind: 'task'; task?: Task } | { kind: 'event'; event?: Event };
@@ -31,7 +41,7 @@ const FONT_SIZE_OPTIONS: Array<{ value: FontSizeScale; label: string }> = [
   { value: 1.25, label: '125%' },
   { value: 1.5, label: '150%' },
 ];
-const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+const weekdays = [0, 1, 2, 3, 4, 5, 6];
 
 const localDateKey = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -186,11 +196,11 @@ function TaskEditor({
       >
         <div className="modal-heading">
           <div>
-            <p className="eyebrow">MY TO-DO LIST</p>
-            <h2 id="task-editor-title">{task ? '编辑待办' : '添加待办'}</h2>
+            <p className="eyebrow">{t('MY TO-DO LIST')}</p>
+            <h2 id="task-editor-title">{t(task ? '编辑待办' : '添加待办')}</h2>
           </div>
           <button
-            aria-label="关闭编辑窗口"
+            aria-label={t('关闭编辑窗口')}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -200,18 +210,18 @@ function TaskEditor({
         </div>
         <form className="editor-form" onSubmit={submit}>
           <label className="field-label">
-            任务名称
+            {t('任务名称')}
             <input
               autoFocus
               maxLength={160}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="写下一件要完成的小事"
+              placeholder={t('写下一件要完成的小事')}
               required
               value={title}
             />
           </label>
           <label className="field-label">
-            日期
+            {t('日期')}
             <input
               onChange={(event) => setDate(event.target.value)}
               required
@@ -220,26 +230,26 @@ function TaskEditor({
             />
           </label>
           <label className="field-label">
-            备注（可选）
+            {t('备注（可选）')}
             <textarea
               maxLength={2000}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="补充一点细节"
+              placeholder={t('补充一点细节')}
               rows={3}
               value={notes}
             />
           </label>
           {error && (
             <p className="form-error" role="alert">
-              {error}
+              {translateSystemMessage(error)}
             </p>
           )}
           <div className="modal-actions">
             <button className="quiet-button" onClick={onClose} type="button">
-              取消
+              {t('取消')}
             </button>
             <button className="primary-button" disabled={saving} type="submit">
-              {saving ? '保存中…' : '保存'}
+              {t(saving ? '保存中…' : '保存')}
             </button>
           </div>
         </form>
@@ -299,11 +309,13 @@ function EventEditor({
       >
         <div className="modal-heading">
           <div>
-            <p className="eyebrow">SCHEDULE</p>
-            <h2 id="event-editor-title">{event ? '编辑日程' : '新建日程'}</h2>
+            <p className="eyebrow">{t('SCHEDULE')}</p>
+            <h2 id="event-editor-title">
+              {t(event ? '编辑日程' : '新建日程')}
+            </h2>
           </div>
           <button
-            aria-label="关闭编辑窗口"
+            aria-label={t('关闭编辑窗口')}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -313,18 +325,18 @@ function EventEditor({
         </div>
         <form className="editor-form" onSubmit={submit}>
           <label className="field-label">
-            标题
+            {t('标题')}
             <input
               autoFocus
               maxLength={160}
               onChange={(inputEvent) => setTitle(inputEvent.target.value)}
-              placeholder="给这段安排起个名字"
+              placeholder={t('给这段安排起个名字')}
               required
               value={title}
             />
           </label>
           <label className="field-label">
-            日期
+            {t('日期')}
             <input
               onChange={(inputEvent) => setDate(inputEvent.target.value)}
               required
@@ -338,11 +350,11 @@ function EventEditor({
               onChange={(inputEvent) => setIsAllDay(inputEvent.target.checked)}
               type="checkbox"
             />
-            <span>全天事件</span>
+            <span>{t('全天事件')}</span>
           </label>
           <div className="time-fields">
             <label className="field-label">
-              开始时间
+              {t('开始时间')}
               <input
                 disabled={isAllDay}
                 onChange={(inputEvent) => setStartTime(inputEvent.target.value)}
@@ -351,7 +363,7 @@ function EventEditor({
               />
             </label>
             <label className="field-label">
-              结束时间
+              {t('结束时间')}
               <input
                 disabled={isAllDay}
                 onChange={(inputEvent) => setEndTime(inputEvent.target.value)}
@@ -361,35 +373,35 @@ function EventEditor({
             </label>
           </div>
           <label className="field-label">
-            地点（可选）
+            {t('地点（可选）')}
             <input
               maxLength={200}
               onChange={(inputEvent) => setLocation(inputEvent.target.value)}
-              placeholder="地点"
+              placeholder={t('地点')}
               value={location}
             />
           </label>
           <label className="field-label">
-            备注（可选）
+            {t('备注（可选）')}
             <textarea
               maxLength={2000}
               onChange={(inputEvent) => setNotes(inputEvent.target.value)}
-              placeholder="补充说明"
+              placeholder={t('补充说明')}
               rows={2}
               value={notes}
             />
           </label>
           {error && (
             <p className="form-error" role="alert">
-              {error}
+              {translateSystemMessage(error)}
             </p>
           )}
           <div className="modal-actions">
             <button className="quiet-button" onClick={onClose} type="button">
-              取消
+              {t('取消')}
             </button>
             <button className="primary-button" disabled={saving} type="submit">
-              {saving ? '保存中…' : '保存日程'}
+              {t(saving ? '保存中…' : '保存日程')}
             </button>
           </div>
         </form>
@@ -442,11 +454,13 @@ function CourseExceptionEditor({
       >
         <div className="modal-heading">
           <div>
-            <p className="eyebrow">单次课程例外</p>
-            <h2 id="course-exception-title">调整 {course.courseName}</h2>
+            <p className="eyebrow">{t('单次课程例外')}</p>
+            <h2 id="course-exception-title">
+              {t('调整')} {course.courseName}
+            </h2>
           </div>
           <button
-            aria-label="关闭编辑窗口"
+            aria-label={t('关闭编辑窗口')}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -455,11 +469,13 @@ function CourseExceptionEditor({
           </button>
         </div>
         <p className="exception-original">
-          原课程日期：{course.originalDate}（只影响这一次）
+          {t('原课程日期：')}
+          {course.originalDate}
+          {t('（只影响这一次）')}
         </p>
         <form className="editor-form" onSubmit={submit}>
           <label className="field-label">
-            实际日期
+            {t('实际日期')}
             <input
               onChange={(event) => setReplacementDate(event.target.value)}
               required
@@ -469,7 +485,7 @@ function CourseExceptionEditor({
           </label>
           <div className="planner-field-row">
             <label className="field-label">
-              开始时间
+              {t('开始时间')}
               <input
                 onChange={(event) => setStartTime(event.target.value)}
                 required
@@ -478,7 +494,7 @@ function CourseExceptionEditor({
               />
             </label>
             <label className="field-label">
-              结束时间
+              {t('结束时间')}
               <input
                 onChange={(event) => setEndTime(event.target.value)}
                 required
@@ -488,7 +504,7 @@ function CourseExceptionEditor({
             </label>
           </div>
           <label className="field-label">
-            教室
+            {t('教室')}
             <input
               maxLength={120}
               onChange={(event) => setClassroom(event.target.value)}
@@ -497,7 +513,7 @@ function CourseExceptionEditor({
           </label>
           {error && (
             <p className="form-error" role="alert">
-              {error}
+              {translateSystemMessage(error)}
             </p>
           )}
           <div className="modal-actions exception-modal-actions">
@@ -508,14 +524,14 @@ function CourseExceptionEditor({
                 onClick={() => void onRestore()}
                 type="button"
               >
-                恢复原课程
+                {t('恢复原课程')}
               </button>
             )}
             <button className="quiet-button" onClick={onClose} type="button">
-              取消
+              {t('取消')}
             </button>
             <button className="primary-button" disabled={saving} type="submit">
-              {saving ? '保存中…' : '保存这一次'}
+              {t(saving ? '保存中…' : '保存这一次')}
             </button>
           </div>
         </form>
@@ -539,8 +555,13 @@ export function App() {
   const [themeId, setThemeId] = useState<ThemeId>(
     () => window.dayByDay.initialTheme,
   );
+  const [languageId, setLanguageId] = useState<LanguageId>(
+    () => window.dayByDay.initialLanguage,
+  );
+  const [languageError, setLanguageError] = useState('');
   const [themeError, setThemeError] = useState('');
   const themeChangeSequence = useRef(0);
+  const languageChangeSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
@@ -555,6 +576,10 @@ export function App() {
     useState<CourseOccurrence | null>(null);
   const [courseExceptionError, setCourseExceptionError] = useState('');
   const [savingCourseException, setSavingCourseException] = useState(false);
+
+  // The preload reads the saved language synchronously, so the first React
+  // render already uses the correct language and does not flash another one.
+  setActiveLanguage(languageId);
 
   const loadDay = useCallback(async (date: string, showLoading: boolean) => {
     if (showLoading) setLoading(true);
@@ -639,6 +664,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    return window.dayByDay.onPreferencesChanged((preferences) => {
+      setThemeId(preferences.themeId);
+      setLanguageId(preferences.languageId);
+      setFontSizeScale(preferences.fontSizeScale);
+    });
+  }, []);
+
+  useEffect(() => {
     void window.dayByDay
       .getFontSizeScale()
       .then(setFontSizeScale)
@@ -672,6 +705,27 @@ export function App() {
     }
   };
 
+  const updateLanguage = async (nextLanguage: LanguageId) => {
+    const previousLanguage = languageId;
+    const requestSequence = ++languageChangeSequence.current;
+    setLanguageError('');
+    setActiveLanguage(nextLanguage);
+    setLanguageId(nextLanguage);
+    try {
+      const savedLanguage = await window.dayByDay.setLanguage(nextLanguage);
+      if (requestSequence === languageChangeSequence.current) {
+        setActiveLanguage(savedLanguage);
+        setLanguageId(savedLanguage);
+      }
+    } catch (error) {
+      if (requestSequence === languageChangeSequence.current) {
+        setActiveLanguage(previousLanguage);
+        setLanguageId(previousLanguage);
+        setLanguageError(getErrorMessage(error));
+      }
+    }
+  };
+
   useEffect(() => {
     void window.dayByDay
       .getAlwaysOnTop()
@@ -683,13 +737,12 @@ export function App() {
     const [year, month, day] = selectedDate.split('-').map(Number);
     return new Date(year, month - 1, day, 12);
   }, [selectedDate]);
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(
-    dateObject,
-  );
-  const dateLabel = new Intl.DateTimeFormat('en-US', {
+  const weekday = formatDate(dateObject, { weekday: 'long' });
+  const dateLabel = formatDate(dateObject, {
     month: 'long',
     day: 'numeric',
-  }).format(dateObject);
+  });
+  const yearLabel = formatDate(dateObject, { year: 'numeric' });
   const tasks = dayData?.tasks ?? [];
   const incompleteTasks = tasks.filter((task) => !task.isCompleted);
   const completedTasks = tasks.filter((task) => task.isCompleted);
@@ -698,6 +751,11 @@ export function App() {
   const currentWeekDays = weekdays.map((_, index) =>
     shiftDate(currentWeekStart, index),
   );
+  const weekStartDate = useMemo(() => {
+    const [year, month, day] = currentWeekStart.split('-').map(Number);
+    return new Date(year, month - 1, day, 12);
+  }, [currentWeekStart]);
+  const localizedWeekdays = formatWeekdayLabels(weekStartDate);
   const agendaItems = mergeAgendaItems(
     dayData?.events ?? [],
     dayData?.courses ?? [],
@@ -791,7 +849,10 @@ export function App() {
   };
 
   const deleteTask = async (task: Task) => {
-    if (!window.confirm(`确定删除待办“${task.title}”吗？`)) return;
+    if (
+      !window.confirm(t('确定删除待办“{{title}}”吗？', { title: task.title }))
+    )
+      return;
     setBusyItemId(task.id);
     setLoadError('');
     try {
@@ -819,7 +880,10 @@ export function App() {
   };
 
   const deleteEvent = async (event: Event) => {
-    if (!window.confirm(`确定删除日程“${event.title}”吗？`)) return;
+    if (
+      !window.confirm(t('确定删除日程“{{title}}”吗？', { title: event.title }))
+    )
+      return;
     setBusyItemId(event.id);
     setLoadError('');
     try {
@@ -868,7 +932,10 @@ export function App() {
   const cancelCourseOccurrence = async (course: CourseOccurrence) => {
     if (
       !window.confirm(
-        `确定取消“${course.courseName}”在 ${course.originalDate} 的这一次课程吗？`,
+        t('确定取消“{{title}}”在 {{date}} 的这一次课程吗？', {
+          title: course.courseName,
+          date: course.originalDate,
+        }),
       )
     )
       return;
@@ -891,6 +958,7 @@ export function App() {
   return (
     <div
       className="app-shell"
+      lang={languageId}
       style={
         {
           ...getThemeTokens(themeId),
@@ -906,31 +974,31 @@ export function App() {
           <span className="brand-name">Daybyday</span>
         </div>
         <div aria-hidden="true" className="drag-region" />
-        <nav aria-label="窗口控制" className="window-controls">
+        <nav aria-label={t('窗口控制')} className="window-controls">
           <button
-            aria-label={alwaysOnTop ? '取消始终置顶' : '始终置顶'}
+            aria-label={t(alwaysOnTop ? '取消始终置顶' : '始终置顶')}
             aria-pressed={alwaysOnTop}
             className={`window-button pin-button${alwaysOnTop ? ' is-active' : ''}`}
             onClick={() => void toggleAlwaysOnTop()}
-            title={alwaysOnTop ? '已始终置顶' : '始终置顶'}
+            title={t(alwaysOnTop ? '已始终置顶' : '始终置顶')}
             type="button"
           >
             <PinIcon />
           </button>
           <button
-            aria-label="最小化窗口"
+            aria-label={t('最小化窗口')}
             className="window-button"
             onClick={() => void window.dayByDay.minimizeWindow()}
-            title="最小化"
+            title={t('最小化')}
             type="button"
           >
             <MinimizeIcon />
           </button>
           <button
-            aria-label="关闭窗口"
+            aria-label={t('关闭窗口')}
             className="window-button close-button"
             onClick={() => void window.dayByDay.closeWindow()}
-            title="关闭"
+            title={t('关闭')}
             type="button"
           >
             <CloseIcon />
@@ -939,14 +1007,14 @@ export function App() {
       </header>
 
       <main className="scroll-content">
-        <nav aria-label="页面切换" className="view-tabs">
+        <nav aria-label={t('页面切换')} className="view-tabs">
           <button
             aria-pressed={viewMode === 'day'}
             className={viewMode === 'day' ? 'is-active' : ''}
             onClick={() => setViewMode('day')}
             type="button"
           >
-            Day
+            {t('Day')}
           </button>
           <button
             aria-pressed={viewMode === 'week'}
@@ -954,7 +1022,7 @@ export function App() {
             onClick={() => setViewMode('week')}
             type="button"
           >
-            Week
+            {t('Week')}
           </button>
           <button
             aria-pressed={viewMode === 'planner'}
@@ -962,7 +1030,7 @@ export function App() {
             onClick={() => setViewMode('planner')}
             type="button"
           >
-            Semester Planner
+            {t('Semester Planner')}
           </button>
           <button
             aria-pressed={viewMode === 'settings'}
@@ -970,7 +1038,7 @@ export function App() {
             onClick={() => setViewMode('settings')}
             type="button"
           >
-            Settings
+            {t('Settings')}
           </button>
         </nav>
         {viewMode === 'planner' ? (
@@ -987,8 +1055,8 @@ export function App() {
         ) : viewMode === 'settings' ? (
           <section aria-labelledby="settings-heading" className="settings-page">
             <div className="settings-page-heading">
-              <p className="eyebrow">PREFERENCES</p>
-              <h1 id="settings-heading">Settings</h1>
+              <p className="eyebrow">{t('PREFERENCES')}</p>
+              <h1 id="settings-heading">{t('Settings')}</h1>
             </div>
             <section
               aria-labelledby="font-size-heading"
@@ -996,12 +1064,13 @@ export function App() {
             >
               <div className="settings-card-heading">
                 <div>
-                  <h2 id="font-size-heading">Font size</h2>
-                  <p>调整全应用文字大小，设置会保存在这台电脑上。</p>
+                  <p className="settings-eyebrow">{t('Appearance')}</p>
+                  <h2 id="font-size-heading">{t('Font size')}</h2>
+                  <p>{t('调整全应用文字大小，设置会保存在这台电脑上。')}</p>
                 </div>
               </div>
               <div
-                aria-label="字体大小"
+                aria-label={t('字体大小')}
                 className="font-size-options"
                 role="group"
               >
@@ -1020,18 +1089,20 @@ export function App() {
                 ))}
               </div>
               <p className="settings-help">
-                100% 为默认大小；115%、125% 和 150%
-                可按阅读习惯选择。文字变大后，内容区域仍可滚动。
+                {t(
+                  '100% 为默认大小；115%、125% 和 150% 可按阅读习惯选择。文字变大后，内容区域仍可滚动。',
+                )}
               </p>
               {(window.innerWidth < 440 || window.innerHeight < 680) && (
                 <p className="settings-notice" role="status">
-                  当前窗口空间较小。为保留你已有的窗口尺寸，DayByDay
-                  没有自动调整窗口；可拖动窗口边缘扩大查看区域。
+                  {t(
+                    '当前窗口空间较小。为保留你已有的窗口尺寸，DayByDay 没有自动调整窗口；可拖动窗口边缘扩大查看区域。',
+                  )}
                 </p>
               )}
               {fontSizeError && (
                 <p className="form-error" role="alert">
-                  {fontSizeError}
+                  {translateSystemMessage(fontSizeError)}
                 </p>
               )}
             </section>
@@ -1041,9 +1112,10 @@ export function App() {
             >
               <div className="settings-card-heading">
                 <div>
-                  <p className="settings-eyebrow">Appearance</p>
-                  <h2 id="theme-color-heading">Theme Color</h2>
-                  <p>选择低饱和度主题，点击后立即预览并保存在这台电脑上。</p>
+                  <h2 id="theme-color-heading">{t('Theme Color')}</h2>
+                  <p>
+                    {t('选择低饱和度主题，点击后立即预览并保存在这台电脑上。')}
+                  </p>
                 </div>
                 <button
                   className="reset-theme-button"
@@ -1051,50 +1123,124 @@ export function App() {
                   onClick={() => void updateTheme('classic')}
                   type="button"
                 >
-                  Reset to default
+                  {t('Reset to default')}
                 </button>
               </div>
-              <div aria-label="主题颜色" className="theme-options" role="group">
-                {THEME_OPTIONS.map((theme) => (
-                  <button
-                    aria-pressed={themeId === theme.id}
-                    className={`theme-option${themeId === theme.id ? ' is-active' : ''}`}
-                    key={theme.id}
-                    onClick={() => void updateTheme(theme.id)}
-                    type="button"
+              {(['soft', 'pop'] as const).map((group) => (
+                <div className="theme-group" key={group}>
+                  <h3>
+                    {t(group === 'soft' ? 'Soft & Muted' : 'Pop & Playful')}
+                  </h3>
+                  <div
+                    aria-label={t(
+                      group === 'soft' ? 'Soft & Muted' : 'Pop & Playful',
+                    )}
+                    className="theme-options"
+                    role="group"
                   >
-                    <span
-                      aria-hidden="true"
-                      className="theme-swatch"
-                      style={
-                        {
-                          '--swatch-accent': theme.accent,
-                          '--swatch-background': theme.background,
-                        } as CSSProperties
-                      }
-                    >
-                      <i />
-                    </span>
-                    <span className="theme-option-name">{theme.name}</span>
-                    <span aria-hidden="true" className="theme-option-check">
-                      {themeId === theme.id ? '✓' : ''}
-                    </span>
-                  </button>
-                ))}
-              </div>
+                    {THEME_OPTIONS.filter((theme) => theme.group === group).map(
+                      (theme) => (
+                        <button
+                          aria-pressed={themeId === theme.id}
+                          className={`theme-option${themeId === theme.id ? ' is-active' : ''}`}
+                          key={theme.id}
+                          onClick={() => void updateTheme(theme.id)}
+                          type="button"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="theme-swatch"
+                            style={
+                              {
+                                '--swatch-accent': theme.accent,
+                                '--swatch-background': theme.background,
+                              } as CSSProperties
+                            }
+                          >
+                            <i />
+                          </span>
+                          <span className="theme-option-name">
+                            {t(theme.name)}
+                          </span>
+                          <span
+                            aria-hidden="true"
+                            className="theme-option-check"
+                          >
+                            {themeId === theme.id ? '✓' : ''}
+                          </span>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+              ))}
               {themeError && (
                 <p className="form-error" role="alert">
-                  {themeError}
+                  {translateSystemMessage(themeError)}
                 </p>
               )}
+            </section>
+            <section
+              aria-labelledby="language-heading"
+              className="settings-card"
+            >
+              <div className="settings-card-heading">
+                <div>
+                  <p className="settings-eyebrow">{t('Language')}</p>
+                  <h2 id="language-heading">{t('App Language')}</h2>
+                </div>
+              </div>
+              <label
+                className="language-select-label"
+                htmlFor="app-language-select"
+              >
+                <span>{t('Language')}</span>
+                <select
+                  id="app-language-select"
+                  value={languageId}
+                  onChange={(event) =>
+                    void updateLanguage(event.target.value as LanguageId)
+                  }
+                >
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.nativeName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {languageError && (
+                <p className="form-error" role="alert">
+                  {translateSystemMessage(languageError)}
+                </p>
+              )}
+            </section>
+            <section
+              aria-labelledby="window-settings-heading"
+              className="settings-card"
+            >
+              <div className="settings-card-heading">
+                <div>
+                  <p className="settings-eyebrow">{t('Window')}</p>
+                  <h2 id="window-settings-heading">{t('Always on Top')}</h2>
+                </div>
+                <button
+                  aria-pressed={alwaysOnTop}
+                  className={`language-window-toggle${alwaysOnTop ? ' is-active' : ''}`}
+                  onClick={() => void toggleAlwaysOnTop()}
+                  type="button"
+                >
+                  {t(alwaysOnTop ? 'On' : 'Off')}
+                </button>
+              </div>
             </section>
           </section>
         ) : (
           <>
-            <section aria-label="日期导航" className="date-section">
+            <section aria-label={t('日期导航')} className="date-section">
               <div className="date-navigation">
                 <button
-                  aria-label={viewMode === 'week' ? '前一周' : '前一天'}
+                  aria-label={t(viewMode === 'week' ? '前一周' : '前一天')}
                   className="date-arrow"
                   onClick={() =>
                     setSelectedDate((date) =>
@@ -1109,11 +1255,11 @@ export function App() {
                   <p className="date-weekday">{weekday}</p>
                   <h1>{dateLabel}</h1>
                   <time className="date-year" dateTime={selectedDate}>
-                    {dateObject.getFullYear()}
+                    {yearLabel}
                   </time>
                 </div>
                 <button
-                  aria-label={viewMode === 'week' ? '后一周' : '后一天'}
+                  aria-label={t(viewMode === 'week' ? '后一周' : '后一天')}
                   className="date-arrow"
                   onClick={() =>
                     setSelectedDate((date) =>
@@ -1127,9 +1273,9 @@ export function App() {
               </div>
               <div className="date-tools">
                 <label className="date-picker-label">
-                  跳转日期
+                  {t('跳转日期')}
                   <input
-                    aria-label="选择查看日期"
+                    aria-label={t('选择查看日期')}
                     onChange={(event) =>
                       event.target.value && setSelectedDate(event.target.value)
                     }
@@ -1143,23 +1289,31 @@ export function App() {
                     onClick={() => setSelectedDate(todayKey)}
                     type="button"
                   >
-                    Today
+                    {t('Today')}
                   </button>
                 )}
               </div>
             </section>
 
             {viewMode === 'week' && (
-              <section aria-label="周视图" className="week-view-card">
+              <section aria-label={t('周视图')} className="week-view-card">
                 <div className="week-view-heading">
                   <div>
                     <strong>
                       {dayData?.teachingWeek
-                        ? `第 ${dayData.teachingWeek} 教学周`
-                        : 'Week view'}
+                        ? formatTeachingWeek(dayData.teachingWeek)
+                        : t('Week view')}
                     </strong>
                     <span>
-                      {currentWeekStart} — {shiftDate(currentWeekStart, 6)}
+                      {formatDateKey(currentWeekStart, {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                      {' — '}
+                      {formatDateKey(shiftDate(currentWeekStart, 6), {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
                     </span>
                   </div>
                   <div className="week-view-actions">
@@ -1175,7 +1329,7 @@ export function App() {
                       onClick={() => setSelectedDate(todayKey)}
                       type="button"
                     >
-                      Today
+                      {t('Today')}
                     </button>
                     <button
                       onClick={() =>
@@ -1202,7 +1356,7 @@ export function App() {
                         onClick={() => setSelectedDate(date)}
                         type="button"
                       >
-                        <span>{weekdays[index]}</span>
+                        <span>{localizedWeekdays[index]}</span>
                         <strong>{Number(date.slice(-2))}</strong>
                         <i
                           aria-hidden="true"
@@ -1213,25 +1367,25 @@ export function App() {
                   })}
                 </div>
                 {weekLoading && (
-                  <p className="week-loading">正在更新本周安排…</p>
+                  <p className="week-loading">{t('正在更新本周安排…')}</p>
                 )}
               </section>
             )}
 
             {controlMessage && (
               <p className="notice-message" role="status">
-                {controlMessage}
+                {t(controlMessage)}
               </p>
             )}
             {loadError && (
               <div className="error-message" role="alert">
-                <span>{loadError}</span>
+                <span>{t(loadError)}</span>
                 <button
                   className="retry-button"
                   onClick={() => void loadDay(selectedDate, true)}
                   type="button"
                 >
-                  重试
+                  {t('重试')}
                 </button>
               </div>
             )}
@@ -1242,19 +1396,19 @@ export function App() {
             >
               <div className="section-heading">
                 <h2 id="schedule-heading">
-                  {isToday ? "Today's schedule" : 'Schedule'}
+                  {isToday ? t("Today's schedule") : t('Schedule')}
                 </h2>
                 <button
                   className="text-action"
                   onClick={() => openEditor({ kind: 'event' })}
                   type="button"
                 >
-                  ＋ 新建日程
+                  {t('＋ 新建日程')}
                 </button>
               </div>
               <div className="schedule-card">
                 {loading ? (
-                  <p className="empty-state">正在读取日程…</p>
+                  <p className="empty-state">{t('正在读取日程…')}</p>
                 ) : agendaItems.length ? (
                   agendaItems.map((item) =>
                     item.kind === 'event' ? (
@@ -1263,7 +1417,7 @@ export function App() {
                         key={`event:${item.event.id}`}
                       >
                         <button
-                          aria-label={`编辑日程 ${item.event.title}`}
+                          aria-label={`${t('编辑日程')} ${item.event.title}`}
                           className="schedule-main"
                           onClick={() =>
                             openEditor({ kind: 'event', event: item.event })
@@ -1272,11 +1426,11 @@ export function App() {
                         >
                           <time className="schedule-time">
                             {item.event.isAllDay
-                              ? '全天'
+                              ? t('全天')
                               : (item.event.startTime ??
                                 (item.event.endTime
-                                  ? `至 ${item.event.endTime}`
-                                  : '时间未定'))}
+                                  ? `${t('至')} ${item.event.endTime}`
+                                  : t('时间未定')))}
                           </time>
                           <span
                             aria-hidden="true"
@@ -1300,22 +1454,22 @@ export function App() {
                         </button>
                         <div className="row-actions">
                           <button
-                            aria-label={`编辑日程 ${item.event.title}`}
+                            aria-label={`${t('编辑日程')} ${item.event.title}`}
                             className="row-action"
                             onClick={() =>
                               openEditor({ kind: 'event', event: item.event })
                             }
-                            title="编辑日程"
+                            title={t('编辑日程')}
                             type="button"
                           >
                             <EditIcon />
                           </button>
                           <button
-                            aria-label={`删除日程 ${item.event.title}`}
+                            aria-label={`${t('删除日程')} ${item.event.title}`}
                             className="row-action delete-action"
                             disabled={busyItemId === item.event.id}
                             onClick={() => void deleteEvent(item.event)}
-                            title="删除日程"
+                            title={t('删除日程')}
                             type="button"
                           >
                             <TrashIcon />
@@ -1328,7 +1482,7 @@ export function App() {
                         key={`course:${item.course.id}:${item.course.originalDate}`}
                       >
                         <button
-                          aria-label={`调整课程 ${item.course.courseName}`}
+                          aria-label={`${t('调整课程')} ${item.course.courseName}`}
                           className="schedule-main"
                           onClick={() => {
                             setCourseExceptionError('');
@@ -1346,8 +1500,8 @@ export function App() {
                           <span className="schedule-copy">
                             <strong>{item.course.courseName}</strong>
                             <span className="schedule-detail">
-                              {item.course.classroom || '教室待定'} ·{' '}
-                              {item.course.isException ? '单次调整' : '课程'}
+                              {item.course.classroom || t('教室待定')} ·{' '}
+                              {t(item.course.isException ? '单次调整' : '课程')}
                             </span>
                           </span>
                           <span className="event-end-time">
@@ -1356,25 +1510,25 @@ export function App() {
                         </button>
                         <div className="row-actions">
                           <button
-                            aria-label={`单次调课 ${item.course.courseName}`}
+                            aria-label={`${t('单次调课')} ${item.course.courseName}`}
                             className="row-action"
                             onClick={() => {
                               setCourseExceptionError('');
                               setCourseOccurrence(item.course);
                             }}
-                            title="调课或改教室"
+                            title={t('调课或改教室')}
                             type="button"
                           >
                             <EditIcon />
                           </button>
                           <button
-                            aria-label={`取消课程 ${item.course.courseName}`}
+                            aria-label={`${t('取消课程')} ${item.course.courseName}`}
                             className="row-action delete-action"
                             disabled={savingCourseException}
                             onClick={() =>
                               void cancelCourseOccurrence(item.course)
                             }
-                            title="仅取消这一次"
+                            title={t('仅取消这一次')}
                             type="button"
                           >
                             ×
@@ -1384,7 +1538,9 @@ export function App() {
                     ),
                   )
                 ) : (
-                  <p className="empty-state">这一天还没有课程或临时日程。</p>
+                  <p className="empty-state">
+                    {t('这一天还没有课程或临时日程。')}
+                  </p>
                 )}
               </div>
             </section>
@@ -1394,9 +1550,9 @@ export function App() {
               className="content-section todo-section"
             >
               <div className="section-heading">
-                <h2 id="todo-heading">My to-do list</h2>
+                <h2 id="todo-heading">{t('My to-do list')}</h2>
                 <span>
-                  {completedTasks.length}/{tasks.length} 完成
+                  {completedTasks.length}/{tasks.length} {t('完成')}
                 </span>
               </div>
               <form
@@ -1404,14 +1560,14 @@ export function App() {
                 onSubmit={(event) => void quickAddTask(event)}
               >
                 <input
-                  aria-label="快速添加待办"
+                  aria-label={t('快速添加待办')}
                   maxLength={160}
                   onChange={(event) => setQuickTitle(event.target.value)}
-                  placeholder="写下一件要完成的小事…"
+                  placeholder={t('写下一件要完成的小事…')}
                   value={quickTitle}
                 />
                 <button
-                  aria-label="添加待办"
+                  aria-label={t('添加待办')}
                   className="add-task-button"
                   disabled={addingTask || !quickTitle.trim()}
                   type="submit"
@@ -1421,9 +1577,11 @@ export function App() {
               </form>
               <div className="todo-card">
                 {loading ? (
-                  <p className="empty-state">正在读取待办…</p>
+                  <p className="empty-state">{t('正在读取待办…')}</p>
                 ) : tasks.length === 0 ? (
-                  <p className="empty-state">还没有待办，写下一件小事吧。</p>
+                  <p className="empty-state">
+                    {t('还没有待办，写下一件小事吧。')}
+                  </p>
                 ) : (
                   <>
                     {incompleteTasks.map((task, index) => (
@@ -1441,7 +1599,7 @@ export function App() {
                     ))}
                     {completedTasks.length > 0 && (
                       <div className="completed-divider">
-                        <span>已完成</span>
+                        <span>{t('已完成')}</span>
                       </div>
                     )}
                     {completedTasks.map((task, index) => (
@@ -1469,7 +1627,7 @@ export function App() {
         <span aria-hidden="true" className="footer-sparkle">
           ✳
         </span>
-        One small thing at a time ♡
+        {t('One small thing at a time ♡')}
       </footer>
 
       {editor?.kind === 'task' && (
@@ -1555,7 +1713,7 @@ function TaskRow({
               className="row-action order-action"
               disabled={busy || index === 0}
               onClick={() => onMove('up')}
-              title="上移"
+              title={t('上移')}
               type="button"
             >
               ↑
@@ -1565,7 +1723,7 @@ function TaskRow({
               className="row-action order-action"
               disabled={busy || index === count - 1}
               onClick={() => onMove('down')}
-              title="下移"
+              title={t('下移')}
               type="button"
             >
               ↓
@@ -1576,7 +1734,7 @@ function TaskRow({
           aria-label={`编辑待办 ${task.title}`}
           className="row-action"
           onClick={onEdit}
-          title="编辑待办"
+          title={t('编辑待办')}
           type="button"
         >
           <EditIcon />
@@ -1586,7 +1744,7 @@ function TaskRow({
           className="row-action delete-action"
           disabled={busy}
           onClick={onDelete}
-          title="删除待办"
+          title={t('删除待办')}
           type="button"
         >
           <TrashIcon />

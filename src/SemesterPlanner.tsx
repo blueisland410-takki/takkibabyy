@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type {
   Course,
@@ -8,6 +9,12 @@ import type {
   SeriesExceptionPolicy,
 } from './domain';
 import { TimetableImport } from './TimetableImport';
+import {
+  formatDateKey,
+  formatTeachingWeek,
+  formatWeekdayNames,
+  translateSystemMessage,
+} from './i18n';
 
 const localDateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -26,16 +33,6 @@ const recurrenceLabel: Record<RecurrenceType, string> = {
   EVEN: '双周',
   CUSTOM: '指定周次',
 };
-const weekdays = [
-  '星期一',
-  '星期二',
-  '星期三',
-  '星期四',
-  '星期五',
-  '星期六',
-  '星期日',
-];
-
 type Props = {
   onCurrentSemesterChanged: () => void;
   onOpenDay: (date: string) => void;
@@ -105,11 +102,11 @@ function SemesterEditor({
       >
         <div className="modal-heading">
           <div>
-            <p className="eyebrow">SEMESTER PLANNER</p>
-            <h2>{semester ? '编辑学期' : '新建学期'}</h2>
+            <p className="eyebrow">{t('SEMESTER PLANNER')}</p>
+            <h2>{t(semester ? '编辑学期' : '新建学期')}</h2>
           </div>
           <button
-            aria-label="关闭"
+            aria-label={t('关闭')}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -119,7 +116,7 @@ function SemesterEditor({
         </div>
         <form className="editor-form" onSubmit={submit}>
           <label className="field-label">
-            学期名称
+            {t('学期名称')}
             <input
               autoFocus
               maxLength={120}
@@ -130,7 +127,7 @@ function SemesterEditor({
           </label>
           <div className="planner-field-row">
             <label className="field-label">
-              开始日期
+              {t('开始日期')}
               <input
                 onChange={(event) => update('startDate', event.target.value)}
                 required
@@ -139,7 +136,7 @@ function SemesterEditor({
               />
             </label>
             <label className="field-label">
-              结束日期
+              {t('结束日期')}
               <input
                 onChange={(event) => update('endDate', event.target.value)}
                 required
@@ -149,7 +146,7 @@ function SemesterEditor({
             </label>
           </div>
           <label className="field-label">
-            第一教学周星期一
+            {t('第一教学周星期一')}
             <input
               onChange={(event) =>
                 update('firstWeekMonday', event.target.value)
@@ -165,19 +162,19 @@ function SemesterEditor({
               onChange={(event) => update('isCurrent', event.target.checked)}
               type="checkbox"
             />
-            设为当前学期
+            {t('设为当前学期')}
           </label>
           {error && (
             <p className="form-error" role="alert">
-              {error}
+              {translateSystemMessage(error)}
             </p>
           )}
           <div className="modal-actions">
             <button className="quiet-button" onClick={onClose} type="button">
-              取消
+              {t('取消')}
             </button>
             <button className="primary-button" disabled={saving} type="submit">
-              {saving ? '保存中…' : '保存学期'}
+              {t(saving ? '保存中…' : '保存学期')}
             </button>
           </div>
         </form>
@@ -201,6 +198,7 @@ function CourseEditor({
   saving: boolean;
   error: string;
 }) {
+  const weekdays = formatWeekdayNames();
   const weekCount = Math.max(
     1,
     Math.min(
@@ -254,10 +252,10 @@ function CourseEditor({
         <div className="modal-heading">
           <div>
             <p className="eyebrow">{semester.semesterName}</p>
-            <h2>{course ? '编辑整个课程系列' : '新增课程'}</h2>
+            <h2>{t(course ? '编辑整个课程系列' : '新增课程')}</h2>
           </div>
           <button
-            aria-label="关闭"
+            aria-label={t('关闭')}
             className="icon-button"
             onClick={onClose}
             type="button"
@@ -267,7 +265,7 @@ function CourseEditor({
         </div>
         <form className="editor-form" onSubmit={submit}>
           <label className="field-label">
-            课程名称
+            {t('课程名称')}
             <input
               autoFocus
               maxLength={120}
@@ -278,7 +276,7 @@ function CourseEditor({
           </label>
           <div className="planner-field-row">
             <label className="field-label">
-              星期
+              {t('星期')}
               <select
                 onChange={(event) =>
                   update('weekday', Number(event.target.value))
@@ -293,7 +291,7 @@ function CourseEditor({
               </select>
             </label>
             <label className="field-label">
-              重复方式
+              {t('重复方式')}
               <select
                 onChange={(event) =>
                   update('recurrenceType', event.target.value as RecurrenceType)
@@ -302,7 +300,7 @@ function CourseEditor({
               >
                 {Object.entries(recurrenceLabel).map(([value, label]) => (
                   <option key={value} value={value}>
-                    {label}
+                    {t(label)}
                   </option>
                 ))}
               </select>
@@ -310,7 +308,7 @@ function CourseEditor({
           </div>
           <div className="planner-field-row">
             <label className="field-label">
-              开始时间
+              {t('开始时间')}
               <input
                 onChange={(event) => update('startTime', event.target.value)}
                 required
@@ -319,7 +317,7 @@ function CourseEditor({
               />
             </label>
             <label className="field-label">
-              结束时间
+              {t('结束时间')}
               <input
                 onChange={(event) => update('endTime', event.target.value)}
                 required
@@ -330,7 +328,7 @@ function CourseEditor({
           </div>
           <div className="planner-field-row">
             <label className="field-label">
-              从第几周
+              {t('从第几周')}
               <input
                 max={weekCount}
                 min={1}
@@ -343,7 +341,7 @@ function CourseEditor({
               />
             </label>
             <label className="field-label">
-              到第几周
+              {t('到第几周')}
               <input
                 max={weekCount}
                 min={1}
@@ -358,7 +356,7 @@ function CourseEditor({
           </div>
           {draft.recurrenceType === 'CUSTOM' && (
             <fieldset className="week-picker">
-              <legend>选择上课周次</legend>
+              <legend>{t('选择上课周次')}</legend>
               <div>
                 {Array.from({ length: weekCount }, (_, index) => index + 1)
                   .filter(
@@ -379,7 +377,7 @@ function CourseEditor({
           )}
           <div className="planner-field-row">
             <label className="field-label">
-              教室
+              {t('教室')}
               <input
                 maxLength={120}
                 onChange={(event) => update('classroom', event.target.value)}
@@ -387,7 +385,7 @@ function CourseEditor({
               />
             </label>
             <label className="field-label">
-              教师
+              {t('教师')}
               <input
                 maxLength={120}
                 onChange={(event) => update('teacher', event.target.value)}
@@ -396,7 +394,7 @@ function CourseEditor({
             </label>
           </div>
           <label className="field-label">
-            备注
+            {t('备注')}
             <textarea
               maxLength={2000}
               onChange={(event) => update('notes', event.target.value)}
@@ -405,14 +403,14 @@ function CourseEditor({
           </label>
           {course && (
             <fieldset className="exception-policy">
-              <legend>已有单次调整</legend>
+              <legend>{t('已有单次调整')}</legend>
               <label>
                 <input
                   checked={exceptionPolicy === 'preserve-valid'}
                   onChange={() => setExceptionPolicy('preserve-valid')}
                   type="radio"
                 />
-                保留仍符合新规则的例外，移除不再对应课程的例外
+                {t('保留仍符合新规则的例外，移除不再对应课程的例外')}
               </label>
               <label>
                 <input
@@ -420,21 +418,21 @@ function CourseEditor({
                   onChange={() => setExceptionPolicy('clear-all')}
                   type="radio"
                 />
-                清除全部单次调课和停课
+                {t('清除全部单次调课和停课')}
               </label>
             </fieldset>
           )}
           {error && (
             <p className="form-error" role="alert">
-              {error}
+              {translateSystemMessage(error)}
             </p>
           )}
           <div className="modal-actions">
             <button className="quiet-button" onClick={onClose} type="button">
-              取消
+              {t('取消')}
             </button>
             <button className="primary-button" disabled={saving} type="submit">
-              {saving ? '保存中…' : '保存课程'}
+              {t(saving ? '保存中…' : '保存课程')}
             </button>
           </div>
         </form>
@@ -447,6 +445,7 @@ export function SemesterPlanner({
   onCurrentSemesterChanged,
   onOpenDay,
 }: Props) {
+  const weekdays = formatWeekdayNames();
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [semesterId, setSemesterId] = useState('');
   const [courses, setCourses] = useState<Course[]>([]);
@@ -566,7 +565,7 @@ export function SemesterPlanner({
     setEditorError('');
     try {
       if (courseEditor && courseEditor !== 'new') {
-        if (!window.confirm('这会修改整个课程系列。是否继续？')) {
+        if (!window.confirm(t('这会修改整个课程系列。是否继续？'))) {
           setBusy(false);
           return;
         }
@@ -589,9 +588,15 @@ export function SemesterPlanner({
   };
 
   const deleteCourse = async (course: Course) => {
-    if (!window.confirm(`删除“${course.courseName}”整个课程系列及其单次调整？`))
+    if (
+      !window.confirm(
+        t('删除“{{title}}”整个课程系列及其单次调整？', {
+          title: course.courseName,
+        }),
+      )
+    )
       return;
-    if (!window.confirm('请再次确认：整个学期的这门课程及其例外都会删除。'))
+    if (!window.confirm(t('请再次确认：整个学期的这门课程及其例外都会删除。')))
       return;
     setBusy(true);
     setError('');
@@ -624,11 +629,11 @@ export function SemesterPlanner({
   }
 
   return (
-    <section aria-label="学期课程管理" className="planner-page">
+    <section aria-label={t('学期课程管理')} className="planner-page">
       <div className="planner-page-heading">
         <div>
-          <p className="eyebrow">SEMESTER PLANNER</p>
-          <h1>学期课程</h1>
+          <p className="eyebrow">{t('SEMESTER PLANNER')}</p>
+          <h1>{t('学期课程')}</h1>
         </div>
         <button
           className="text-action"
@@ -638,32 +643,32 @@ export function SemesterPlanner({
           }}
           type="button"
         >
-          ＋ 新建学期
+          {t('＋ 新建学期')}
         </button>
       </div>
       {error && (
         <div className="error-message" role="alert">
-          <span>{error}</span>
+          <span>{translateSystemMessage(error)}</span>
           <button
             className="retry-button"
             onClick={() => void loadSemesters()}
             type="button"
           >
-            重试
+            {t('重试')}
           </button>
         </div>
       )}
       {loading && !selectedSemester ? (
-        <p className="empty-state planner-card">正在读取学期…</p>
+        <p className="empty-state planner-card">{t('正在读取学期…')}</p>
       ) : semesters.length === 0 ? (
         <div className="empty-state planner-card">
-          还没有学期，先建立一个学期再添加课程。
+          {t('还没有学期，先建立一个学期再添加课程。')}
         </div>
       ) : selectedSemester ? (
         <>
           <div className="semester-card">
             <label className="semester-select-label">
-              查看学期
+              {t('查看学期')}
               <select
                 onChange={(event) => setSemesterId(event.target.value)}
                 value={selectedSemester.id}
@@ -671,7 +676,7 @@ export function SemesterPlanner({
                 {semesters.map((semester) => (
                   <option key={semester.id} value={semester.id}>
                     {semester.semesterName}
-                    {semester.isCurrent ? ' · 当前' : ''}
+                    {semester.isCurrent ? t(' · 当前') : ''}
                   </option>
                 ))}
               </select>
@@ -679,9 +684,14 @@ export function SemesterPlanner({
             <div className="semester-summary">
               <strong>{selectedSemester.semesterName}</strong>
               <span>
-                {selectedSemester.startDate} — {selectedSemester.endDate}
+                {formatDateKey(selectedSemester.startDate)} —{' '}
+                {formatDateKey(selectedSemester.endDate)}
               </span>
-              <span>第 {currentWeek ?? '—'} 教学周</span>
+              <span>
+                {currentWeek
+                  ? formatTeachingWeek(currentWeek)
+                  : t('尚未开始教学')}
+              </span>
             </div>
             <div className="planner-actions">
               <button
@@ -689,7 +699,7 @@ export function SemesterPlanner({
                 onClick={() => setSemesterEditor(selectedSemester)}
                 type="button"
               >
-                编辑学期
+                {t('编辑学期')}
               </button>
               {!selectedSemester.isCurrent && (
                 <button
@@ -698,7 +708,7 @@ export function SemesterPlanner({
                   onClick={() => void makeCurrent()}
                   type="button"
                 >
-                  设为当前学期
+                  {t('设为当前学期')}
                 </button>
               )}
               <button
@@ -709,32 +719,32 @@ export function SemesterPlanner({
                 }}
                 type="button"
               >
-                ＋ 新增课程
+                {t('＋ 新增课程')}
               </button>
             </div>
           </div>
           <div className="course-list-heading">
-            <h2>我的课程</h2>
+            <h2>{t('我的课程')}</h2>
             <div className="course-list-tools">
               <button
                 className="text-action"
                 onClick={() => setImportOpen(true)}
                 type="button"
               >
-                Import timetable
+                {t('Import timetable')}
               </button>
               <button
                 className="text-action"
                 onClick={() => onOpenDay(localDateKey(new Date()))}
                 type="button"
               >
-                查看今日安排
+                {t('查看今日安排')}
               </button>
             </div>
           </div>
           {courses.length === 0 ? (
             <div className="empty-state planner-card">
-              <span>No classes yet.</span>
+              <span>{t('No classes yet.')}</span>
               <button
                 className="text-action"
                 onClick={() => {
@@ -743,7 +753,7 @@ export function SemesterPlanner({
                 }}
                 type="button"
               >
-                ＋ 新增课程
+                {t('＋ 新增课程')}
               </button>
             </div>
           ) : (
@@ -757,12 +767,12 @@ export function SemesterPlanner({
                     </span>
                     <strong>{course.courseName}</strong>
                     <span>
-                      {course.classroom || '教室待定'}
+                      {course.classroom || t('教室待定')}
                       {course.teacher ? ` · ${course.teacher}` : ''}
                     </span>
                     <span>
-                      第 {course.firstWeek}–{course.lastWeek} 周 ·{' '}
-                      {recurrenceLabel[course.recurrenceType]}
+                      {t('第')} {course.firstWeek}–{course.lastWeek} {t('周 ·')}{' '}
+                      {t(recurrenceLabel[course.recurrenceType])}
                       {course.recurrenceType === 'CUSTOM'
                         ? `（${course.customWeeks.join('、')}）`
                         : ''}
@@ -770,23 +780,23 @@ export function SemesterPlanner({
                   </div>
                   <div className="row-actions">
                     <button
-                      aria-label={`编辑课程 ${course.courseName}`}
+                      aria-label={`${t('编辑课程')} ${course.courseName}`}
                       className="row-action"
                       onClick={() => {
                         setEditorError('');
                         setCourseEditor(course);
                       }}
-                      title="编辑整个系列"
+                      title={t('编辑整个系列')}
                       type="button"
                     >
                       ✎
                     </button>
                     <button
-                      aria-label={`删除课程 ${course.courseName}`}
+                      aria-label={`${t('删除课程')} ${course.courseName}`}
                       className="row-action delete-action"
                       disabled={busy}
                       onClick={() => void deleteCourse(course)}
-                      title="删除整个系列"
+                      title={t('删除整个系列')}
                       type="button"
                     >
                       ×

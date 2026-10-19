@@ -78,7 +78,11 @@ export type ThemeId =
   | 'sage-green'
   | 'misty-blue'
   | 'muted-lavender'
-  | 'oat-beige';
+  | 'oat-beige'
+  | 'mint-pop'
+  | 'sapphire'
+  | 'y2k-pink';
+export type LanguageId = 'zh-CN' | 'zh-TW' | 'ja-JP' | 'ko-KR' | 'en-US';
 
 export type Course = {
   id: string;

@@ -72,6 +72,23 @@ button:disabled {
     background-color 160ms ease;
 }
 
+.app-shell[lang='zh-CN'] {
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+}
+.app-shell[lang='zh-TW'] {
+  font-family:
+    'Microsoft JhengHei UI', 'Microsoft JhengHei', 'Segoe UI', sans-serif;
+}
+.app-shell[lang='ja-JP'] {
+  font-family: 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', 'Segoe UI', sans-serif;
+}
+.app-shell[lang='ko-KR'] {
+  font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+}
+.app-shell[lang='en-US'] {
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+}
+
 .titlebar {
   z-index: 1;
   display: flex;
@@ -2238,6 +2255,51 @@ button:disabled {
   flex: 0 0 auto;
   text-align: center;
   font-weight: 700;
+}
+.theme-group {
+  margin-top: 14px;
+}
+.theme-group h3 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  font-weight: 650;
+}
+.theme-group .theme-options {
+  margin-top: 8px;
+}
+.language-select-label {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+.language-select-label select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: var(--font-button);
+}
+.language-window-toggle {
+  min-width: 66px;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--font-button);
+}
+.language-window-toggle.is-active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
 }
 .reset-theme-button {
   min-height: 34px;

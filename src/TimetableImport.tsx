@@ -1,3 +1,4 @@
+import { t, translateSystemMessage } from './i18n';
 import {
   useEffect,
   useMemo,
@@ -19,12 +20,17 @@ import type {
 } from './domain';
 import { StructuredImport } from './StructuredImport';
 import { sha256 } from './importParsers';
+import {
+  detectMobileTimetableLayout,
+  type MobileTimetableAnalysis,
+} from './mobileTimetableParser';
 import type { OcrLine, TimetableCourseDraft } from './timetableParser';
 import {
   ocrLinesFromBlocks,
   parseTimetableLines,
   timeRangeForPeriods,
 } from './timetableParser';
+import { formatDate, formatTeachingWeek, formatWeekdayNames } from './i18n';
 
 type Props = {
   semester: Semester;
@@ -39,17 +45,8 @@ type AnalysisState = {
   courseIds: string[];
   payload: ImportBatchPayload;
 };
-type ImportMode = 'IMAGE' | 'ICS' | 'XLSX' | 'CSV';
+type ImportMode = 'IMAGE' | 'MOBILE' | 'ICS' | 'XLSX' | 'CSV';
 
-const weekdays = [
-  '星期一',
-  '星期二',
-  '星期三',
-  '星期四',
-  '星期五',
-  '星期六',
-  '星期日',
-];
 const recurrenceOptions: Array<[RecurrenceType, string]> = [
   ['ALL', '每周'],
   ['ODD', '单周'],
@@ -58,6 +55,31 @@ const recurrenceOptions: Array<[RecurrenceType, string]> = [
 ];
 const maxImageBytes = 15 * 1024 * 1024;
 const maxImagePixels = 30_000_000;
+
+async function readImagePixels(imageFile: File) {
+  const bitmap = await createImageBitmap(imageFile);
+  try {
+    const scale = Math.min(1, 900 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('无法读取图片像素，请换一张图片重试。');
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    return {
+      image: {
+        width: canvas.width,
+        height: canvas.height,
+        data: pixels.data,
+      },
+      scaleX: canvas.width / bitmap.width,
+      scaleY: canvas.height / bitmap.height,
+    };
+  } finally {
+    bitmap.close();
+  }
+}
 
 const localWeekCount = (semester: Semester) => {
   const end = new Date(`${semester.endDate}T00:00:00Z`).getTime();
@@ -165,6 +187,7 @@ export function TimetableImport({
   onClose,
   onImported,
 }: Props) {
+  const weekdays = formatWeekdayNames();
   const [sourceMode, setSourceMode] = useState<ImportMode>('IMAGE');
   const [file, setFile] = useState<File | null>(null);
   const [fileHash, setFileHash] = useState('');
@@ -189,6 +212,8 @@ export function TimetableImport({
   const [rawLines, setRawLines] = useState<OcrLine[]>([]);
   const [unassignedText, setUnassignedText] = useState<string[]>([]);
   const [weekdayColumnsFound, setWeekdayColumnsFound] = useState(0);
+  const [mobileAnalysis, setMobileAnalysis] =
+    useState<MobileTimetableAnalysis | null>(null);
   const [courses, setCourses] = useState<TimetableCourseDraft[]>([]);
   const [includedIds, setIncludedIds] = useState<Set<string>>(new Set());
   const [periodCount, setPeriodCount] = useState(12);
@@ -318,6 +343,7 @@ export function TimetableImport({
       setRawLines([]);
       setUnassignedText([]);
       setWeekdayColumnsFound(0);
+      setMobileAnalysis(null);
       markEdited([]);
       setIncludedIds(new Set());
     } catch (failure) {
@@ -344,7 +370,7 @@ export function TimetableImport({
     setError('');
     setSuccess('');
     setProgress(0);
-    setRecognitionStatus('正在启动本地 OCR…');
+    setRecognitionStatus(t('正在启动本地 OCR…'));
     let worker: Tesseract.Worker | null = null;
     try {
       worker = await Tesseract.createWorker(
@@ -357,7 +383,7 @@ export function TimetableImport({
           gzip: true,
           logger: (message) => {
             setProgress(Math.round(message.progress * 100));
-            setRecognitionStatus(message.status || '正在识别…');
+            setRecognitionStatus(message.status || t('正在识别…'));
           },
         },
       );
@@ -373,26 +399,57 @@ export function TimetableImport({
       );
       if (cancelledRef.current) return;
       const lines = extractRawLines(result.data);
-      const parsed = parseTimetableLines(lines, semesterWeeks);
-      const nonEmpty = parsed.courses;
       setRawText(result.data.text);
       setRawLines(lines);
+      setAnalysisState(null);
+      if (sourceMode === 'MOBILE') {
+        const { image, scaleX, scaleY } = await readImagePixels(file);
+        const analysisLines = lines.map((line) => ({
+          ...line,
+          bbox: {
+            x0: line.bbox.x0 * scaleX,
+            x1: line.bbox.x1 * scaleX,
+            y0: line.bbox.y0 * scaleY,
+            y1: line.bbox.y1 * scaleY,
+          },
+        }));
+        const layout = detectMobileTimetableLayout(image, analysisLines);
+        setMobileAnalysis(layout);
+        setCourses([]);
+        setIncludedIds(new Set());
+        setUnassignedText([]);
+        setWeekdayColumnsFound(layout.weekdayColumns.length);
+        setRecognitionStatus(
+          `${t('手机课表结构分析完成：定位 {{count}} 个可见色块。', {
+            count: layout.courseBlocks.length,
+          })}${layout.teachingWeek ? ` · ${formatTeachingWeek(layout.teachingWeek)}` : ''} ${t('本次结果只代表截图可见区域，不会扩展到整个学期。')}`,
+        );
+        if (!lines.length || !result.data.text.trim())
+          setError(
+            t('色块已分析，但文字 OCR 不完整；请保留原图并等待人工校对功能。'),
+          );
+        return;
+      }
+      setMobileAnalysis(null);
+      const parsed = parseTimetableLines(lines, semesterWeeks);
+      const nonEmpty = parsed.courses;
       setCourses(nonEmpty);
       setIncludedIds(new Set(nonEmpty.map((course) => course.id)));
       setUnassignedText(parsed.unassignedText);
       setWeekdayColumnsFound(parsed.weekdayColumnsFound);
-      setAnalysisState(null);
       setRecognitionStatus(
         nonEmpty.length
-          ? `识别完成：发现 ${nonEmpty.length} 个候选课程`
-          : '文字识别完成，但没有可靠识别出课程单元格',
+          ? t('识别完成：发现 {{count}} 个候选课程', { count: nonEmpty.length })
+          : t('文字识别完成，但没有可靠识别出课程单元格'),
       );
       if (!lines.length || !result.data.text.trim())
-        setError('没有识别到文字。请换一张更清晰的图片，或手动新增课程。');
+        setError(t('没有识别到文字。请换一张更清晰的图片，或手动新增课程。'));
     } catch (failure) {
       if (!cancelledRef.current)
         setError(
-          `本地识别失败：${errorText(failure)} 请检查本地 OCR 资源后重试。`,
+          t('本地识别失败：{{message}} 请检查本地 OCR 资源后重试。', {
+            message: errorText(failure),
+          }),
         );
     } finally {
       if (worker && workerRef.current === worker) {
@@ -406,7 +463,7 @@ export function TimetableImport({
   const cancelRecognition = () => {
     cancelledRef.current = true;
     setRecognizing(false);
-    setRecognitionStatus('识别已取消，可以再次点击 Recognize 重试。');
+    setRecognitionStatus(t('识别已取消，可以再次点击 Recognize 重试。'));
     if (workerRef.current) {
       const worker = workerRef.current;
       workerRef.current = null;
@@ -436,7 +493,9 @@ export function TimetableImport({
         }),
       );
     } catch (failure) {
-      setError(`节次模板没有保存：${errorText(failure)}`);
+      setError(
+        t('节次模板没有保存：{{message}}', { message: errorText(failure) }),
+      );
     } finally {
       setSavingPeriods(false);
     }
@@ -542,10 +601,17 @@ export function TimetableImport({
         ),
       );
       setSuccess(
-        `检查完成：${inputs.length} 门课程；发现 ${result.duplicates.length} 条可能重复、${result.conflicts.length} 处时间冲突。`,
+        t(
+          '检查完成：{{count}} 条记录，{{duplicates}} 条可能重复，{{conflicts}} 处时间冲突。',
+          {
+            count: inputs.length,
+            duplicates: result.duplicates.length,
+            conflicts: result.conflicts.length,
+          },
+        ),
       );
     } catch (failure) {
-      setError(`检查课程失败：${errorText(failure)}`);
+      setError(t('检查课程失败：{{message}}', { message: errorText(failure) }));
     } finally {
       setAnalyzing(false);
     }
@@ -554,7 +620,13 @@ export function TimetableImport({
   const confirmImport = async () => {
     if (!analysisState || importing || !currentAnalysis) return;
     const confirmed = window.confirm(
-      `即将导入 ${analysisState.courseIds.length} 门已校对课程至“${semester.semesterName}”。重复课程默认跳过；时间冲突只提示，不会覆盖已有课程。继续吗？`,
+      t(
+        '即将导入 {{count}} 门已校对课程至“{{semester}}”。重复课程默认跳过；时间冲突只提示，不会覆盖已有课程。继续吗？',
+        {
+          count: analysisState.courseIds.length,
+          semester: semester.semesterName,
+        },
+      ),
     );
     if (!confirmed) return;
     setImporting(true);
@@ -573,12 +645,17 @@ export function TimetableImport({
       setAnalysisState(null);
       setImportBatches(await window.dayByDay.listImportBatches(semester.id));
       setSuccess(
-        `导入完成：新增 ${result.importedCount} 门课程，跳过 ${result.skippedCount} 条重复课程。`,
+        t('导入完成：新增 {{count}} 门课程，跳过 {{skipped}} 条重复课程。', {
+          count: result.importedCount,
+          skipped: result.skippedCount,
+        }),
       );
       onImported();
     } catch (failure) {
       setError(
-        `课程未导入，原有课程保持不变：${errorText(failure)}。请重新检查后重试。`,
+        t('课程未导入，原有课程保持不变：{{message}}。请重新检查后重试。', {
+          message: errorText(failure),
+        }),
       );
       setAnalysisState(null);
     } finally {
@@ -588,7 +665,7 @@ export function TimetableImport({
 
   const undoImportBatch = async (batchId: string) => {
     if (importing) return;
-    if (!window.confirm('仅撤销此批次新增且之后没有修改的课程。继续吗？'))
+    if (!window.confirm(t('仅撤销此批次新增且之后没有修改的课程。继续吗？')))
       return;
     setImporting(true);
     setError('');
@@ -596,11 +673,17 @@ export function TimetableImport({
       const result = await window.dayByDay.undoImportBatch(batchId);
       setImportBatches(await window.dayByDay.listImportBatches(semester.id));
       setSuccess(
-        `批次已撤销：移除 ${result.removedCourseCount} 门课程；${result.retainedItemCount} 门因导入后有修改而保留。`,
+        t(
+          '批次已撤销：移除 {{count}} 门课程；{{retained}} 门因导入后有修改而保留。',
+          {
+            count: result.removedCourseCount,
+            retained: result.retainedItemCount,
+          },
+        ),
       );
       onImported();
     } catch (failure) {
-      setError(`撤销失败：${errorText(failure)}`);
+      setError(t('撤销失败：{{message}}', { message: errorText(failure) }));
     } finally {
       setImporting(false);
     }
@@ -628,10 +711,11 @@ export function TimetableImport({
   };
 
   const methodButtons = (
-    <nav aria-label="导入格式" className="import-method-switch">
+    <nav aria-label={t('导入格式')} className="import-method-switch">
       {(
         [
           ['IMAGE', 'Import from image'],
+          ['MOBILE', 'Mobile Timetable'],
           ['ICS', 'Import ICS'],
           ['XLSX', 'Import Excel'],
           ['CSV', 'Import CSV'],
@@ -641,32 +725,53 @@ export function TimetableImport({
           aria-pressed={sourceMode === mode}
           className={sourceMode === mode ? 'is-selected' : ''}
           key={mode}
-          onClick={() => setSourceMode(mode)}
+          onClick={() => {
+            setSourceMode(mode);
+            if (mode === 'MOBILE') {
+              setCourses([]);
+              setIncludedIds(new Set());
+              setMobileAnalysis(null);
+              setAnalysisState(null);
+              setRawText('');
+              setRawLines([]);
+              setUnassignedText([]);
+              setWeekdayColumnsFound(0);
+              setError('');
+              setSuccess('');
+            } else if (mode === 'IMAGE') {
+              setMobileAnalysis(null);
+              setRawText('');
+              setRawLines([]);
+              setUnassignedText([]);
+              setWeekdayColumnsFound(0);
+            }
+          }}
           type="button"
         >
-          {label}
+          {t(label)}
         </button>
       ))}
       <button
         className="future-import-method"
         disabled
-        title="PDF / DOCX 将在检查点 C 实现"
+        title={t('PDF / DOCX 将在检查点 C 实现')}
         type="button"
       >
-        Import document · C 阶段
+        {t('Import document · C 阶段')}
       </button>
     </nav>
   );
 
-  if (sourceMode !== 'IMAGE') {
+  if (sourceMode !== 'IMAGE' && sourceMode !== 'MOBILE') {
     return (
-      <section aria-label="课程导入" className="timetable-import">
+      <section aria-label={t('课程导入')} className="timetable-import">
         <div className="import-heading">
           <div>
-            <p className="eyebrow">SMART TIMETABLE IMPORT</p>
-            <h1>导入课程表</h1>
+            <p className="eyebrow">{t('SMART TIMETABLE IMPORT')}</p>
+            <h1>{t('导入课程表')}</h1>
             <p className="import-semester">
-              目标学期：{semester.semesterName} · {semesterWeeks} 周
+              {t('目标学期：')}
+              {semester.semesterName} · {semesterWeeks} {t('周')}
             </p>
           </div>
         </div>
@@ -682,33 +787,40 @@ export function TimetableImport({
   }
 
   return (
-    <section aria-label="课表截图导入" className="timetable-import">
+    <section
+      aria-label={t(sourceMode === 'MOBILE' ? '手机课表识别' : '课表截图导入')}
+      className="timetable-import"
+    >
       <div className="import-heading">
         <div>
-          <p className="eyebrow">SMART TIMETABLE IMPORT</p>
-          <h1>导入课程表</h1>
+          <p className="eyebrow">{t('SMART TIMETABLE IMPORT')}</p>
+          <h1>{t(sourceMode === 'MOBILE' ? '手机教务课表' : '导入课程表')}</h1>
           <p className="import-semester">
-            目标学期：{semester.semesterName} · {semesterWeeks} 周
+            {t('目标学期：')}
+            {semester.semesterName} · {semesterWeeks} {t('周')}
           </p>
         </div>
         <button className="quiet-button" onClick={onClose} type="button">
-          返回课程列表
+          {t('返回课程列表')}
         </button>
       </div>
 
       {methodButtons}
 
       {importBatches.length > 0 && (
-        <section className="import-batch-history" aria-label="导入记录">
-          <strong>最近导入记录</strong>
+        <section className="import-batch-history" aria-label={t('导入记录')}>
+          <strong>{t('最近导入记录')}</strong>
           {importBatches.map((batch) => (
             <div className="import-batch-row" key={batch.id}>
               <span>
                 {batch.sourceLabel} ·{' '}
-                {new Date(batch.createdAt).toLocaleString()} ·{' '}
-                {batch.importedCourseCount} 门课程 / {batch.importedEventCount}{' '}
-                条日程
-                {batch.undoneAt ? ' · 已撤销' : ''}
+                {formatDate(new Date(batch.createdAt), {
+                  dateStyle: 'short',
+                  timeStyle: 'short',
+                })}{' '}
+                · {batch.importedCourseCount} {t('门课程 /')}{' '}
+                {batch.importedEventCount} {t('条日程')}
+                {batch.undoneAt ? t(' · 已撤销') : ''}
               </span>
               {!batch.undoneAt &&
                 batch.importedCourseCount + batch.importedEventCount > 0 && (
@@ -718,7 +830,7 @@ export function TimetableImport({
                     onClick={() => void undoImportBatch(batch.id)}
                     type="button"
                   >
-                    撤销此批次
+                    {t('撤销此批次')}
                   </button>
                 )}
             </div>
@@ -735,14 +847,14 @@ export function TimetableImport({
           }
           role={error ? 'alert' : 'status'}
         >
-          <span>{error || success}</span>
+          <span>{translateSystemMessage(error || success)}</span>
           {error && (
             <button
               className="retry-button"
               onClick={() => setError('')}
               type="button"
             >
-              知道了
+              {t('知道了')}
             </button>
           )}
         </div>
@@ -753,8 +865,12 @@ export function TimetableImport({
           <section className="import-panel source-panel">
             <div className="import-panel-heading">
               <div>
-                <h2>原始课表截图</h2>
-                <span>{imageSize || '仅暂存于当前页面，不会写入数据库'}</span>
+                <h2>
+                  {t(sourceMode === 'MOBILE' ? '手机课表截图' : '原始课表截图')}
+                </h2>
+                <span>
+                  {imageSize || t('仅暂存于当前页面，不会写入数据库')}
+                </span>
               </div>
               <div className="image-actions">
                 {file && (
@@ -762,9 +878,9 @@ export function TimetableImport({
                     className="quiet-button compact-button"
                     onClick={() => void loadImage(file)}
                     type="button"
-                    title="清除识别结果并重新识别"
+                    title={t('清除识别结果并重新识别')}
                   >
-                    重新识别
+                    {t('重新识别')}
                   </button>
                 )}
                 {file && (
@@ -776,11 +892,12 @@ export function TimetableImport({
                       setPreviewUrl('');
                       setCourses([]);
                       setRawText('');
+                      setMobileAnalysis(null);
                       setAnalysisState(null);
                     }}
                     type="button"
                   >
-                    清除
+                    {t('清除')}
                   </button>
                 )}
               </div>
@@ -801,11 +918,11 @@ export function TimetableImport({
               onPointerMove={onImagePointerMove}
               onPointerUp={stopImagePointer}
               role="region"
-              aria-label="课表图片预览，可拖入图片"
+              aria-label={t('课表图片预览，可拖入图片')}
             >
               {previewUrl ? (
                 <img
-                  alt="待识别的课程表原图"
+                  alt={t('待识别的课程表原图')}
                   draggable={false}
                   src={previewUrl}
                   style={{
@@ -815,16 +932,16 @@ export function TimetableImport({
               ) : (
                 <div className="dropzone-copy">
                   <span>＋</span>
-                  <strong>拖入课程表图片</strong>
-                  <small>或点击下方选择 PNG / JPG / JPEG</small>
+                  <strong>{t('拖入课程表图片')}</strong>
+                  <small>{t('或点击下方选择 PNG / JPG / JPEG')}</small>
                   <button
                     className="quiet-button"
                     onClick={() => fileInput.current?.click()}
                     type="button"
                   >
-                    选择图片
+                    {t('选择图片')}
                   </button>
-                  <small>≤ 15 MB · 至少 240 × 160 · 不会上传</small>
+                  <small>{t('≤ 15 MB · 至少 240 × 160 · 不会上传')}</small>
                 </div>
               )}
             </div>
@@ -833,7 +950,7 @@ export function TimetableImport({
                 <span title={file.name}>{file.name}</span>
                 <div>
                   <button
-                    aria-label="缩小图片"
+                    aria-label={t('缩小图片')}
                     className="row-action"
                     onClick={() =>
                       setScale((value) => Math.max(0.5, value - 0.25))
@@ -844,7 +961,7 @@ export function TimetableImport({
                   </button>
                   <span>{Math.round(scale * 100)}%</span>
                   <button
-                    aria-label="放大图片"
+                    aria-label={t('放大图片')}
                     className="row-action"
                     onClick={() =>
                       setScale((value) => Math.min(3, value + 0.25))
@@ -861,7 +978,7 @@ export function TimetableImport({
                     }}
                     type="button"
                   >
-                    重置
+                    {t('重置')}
                   </button>
                 </div>
               </div>
@@ -874,7 +991,7 @@ export function TimetableImport({
                   onClick={() => void recognize()}
                   type="button"
                 >
-                  Recognize
+                  {t('Recognize')}
                 </button>
               ) : (
                 <button
@@ -882,12 +999,12 @@ export function TimetableImport({
                   onClick={cancelRecognition}
                   type="button"
                 >
-                  取消识别
+                  {t('取消识别')}
                 </button>
               )}
               <div aria-live="polite" className="recognition-progress">
                 <span>
-                  {recognitionStatus || '识别将在本机运行，首次加载会稍慢。'}
+                  {t(recognitionStatus || '识别将在本机运行，首次加载会稍慢。')}
                 </span>
                 {recognizing && (
                   <>
@@ -901,15 +1018,16 @@ export function TimetableImport({
 
           <details className="period-template-panel" open>
             <summary>
-              学校节次时间设置{' '}
-              {periodTemplateSaved ? '· 已保存默认模板' : '· 可选'}
+              {t('学校节次时间设置')}{' '}
+              {t(periodTemplateSaved ? '· 已保存默认模板' : '· 可选')}
             </summary>
             <p>
-              截图只有“第 1
-              节”等节次时，填写本校时间；没有模板时不会猜测上课时间。
+              {t(
+                '截图只有“第 1 节”等节次时，填写本校时间；没有模板时不会猜测上课时间。',
+              )}
             </p>
             <label className="period-count-label">
-              设置节数{' '}
+              {t('设置节数')}{' '}
               <input
                 max="24"
                 min="1"
@@ -923,7 +1041,9 @@ export function TimetableImport({
             <div className="period-template-grid">
               {periodDrafts.slice(0, periodCount).map((period, index) => (
                 <div className="period-row" key={period.periodNumber}>
-                  <strong>第 {index + 1} 节</strong>
+                  <strong>
+                    {t('第')} {index + 1} {t('节')}
+                  </strong>
                   <input
                     aria-label={`第 ${index + 1} 节开始时间`}
                     onChange={(event) =>
@@ -962,7 +1082,7 @@ export function TimetableImport({
               onClick={() => void savePeriodTemplate()}
               type="button"
             >
-              {savingPeriods ? '保存中…' : '保存为默认模板'}
+              {t(savingPeriods ? '保存中…' : '保存为默认模板')}
             </button>
           </details>
         </aside>
@@ -971,26 +1091,29 @@ export function TimetableImport({
           <section className="import-panel review-panel">
             <div className="import-panel-heading review-heading">
               <div>
-                <h2>识别结果校对</h2>
+                <h2>{t('识别结果校对')}</h2>
                 <span>
                   {weekdayColumnsFound
-                    ? `识别到 ${weekdayColumnsFound} 个星期列`
-                    : '无法确定表格列时，请手动补全'}
+                    ? t('识别到 {{count}} 个星期列', {
+                        count: weekdayColumnsFound,
+                      })
+                    : t('无法确定表格列时，请手动补全')}
                 </span>
               </div>
               <button
                 className="text-action"
-                disabled={!file}
+                disabled={!file || sourceMode === 'MOBILE'}
                 onClick={addCourse}
                 type="button"
               >
-                ＋ 手动新增课程
+                {t('＋ 手动新增课程')}
               </button>
             </div>
             {rawText && (
               <details className="raw-ocr-details">
                 <summary>
-                  查看原始 OCR 文字和坐标信息（{rawLines.length} 行）
+                  {t('查看原始 OCR 文字和坐标信息（')}
+                  {rawLines.length} {t('行）')}
                 </summary>
                 <pre>
                   {rawLines
@@ -1002,24 +1125,75 @@ export function TimetableImport({
                 </pre>
               </details>
             )}
+            {mobileAnalysis && (
+              <section
+                aria-label={t('手机课表结构识别结果')}
+                className="mobile-analysis-summary"
+              >
+                <h3>
+                  {mobileAnalysis.teachingWeek
+                    ? t('第 {{week}} 周 · 可见课表结构', {
+                        week: mobileAnalysis.teachingWeek,
+                      })
+                    : t('可见课表结构 · 周次待确认')}
+                </h3>
+                <p>
+                  {t('定位到')} {mobileAnalysis.courseBlocks.length}{' '}
+                  {t('个颜色区域、')}
+                  {mobileAnalysis.weekdayColumns.length} {t('个星期列和')}{' '}
+                  {mobileAnalysis.periodRows.length}{' '}
+                  {t(
+                    '个节次标记。 本图只代表当前可见周，不会推断整个学期的重复安排；未设置作息模板，因此没有生成钟点时间。',
+                  )}
+                </p>
+                {mobileAnalysis.warnings.map((warning) => (
+                  <p className="mobile-analysis-warning" key={warning}>
+                    {t(warning)}
+                  </p>
+                ))}
+                <ol>
+                  {mobileAnalysis.courseBlocks.map((block) => (
+                    <li key={block.id}>
+                      {t('周')}
+                      {block.weekday ?? '?'} · {block.periodStart ?? '?'}–
+                      {block.periodEnd ?? '?'}
+                      {t('节')}
+                      {block.sourceText
+                        ? ` · ${block.sourceText.replace(/\n/g, ' / ')}`
+                        : t(' · 文字待确认')}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
             {unassignedText.length > 0 && (
               <p className="parse-note">
-                有 {unassignedText.length}{' '}
-                行文字未能放入星期列，保留在原始文字中；请检查是否漏了课程。
+                {t('有')} {unassignedText.length}{' '}
+                {t(
+                  '行文字未能放入星期列，保留在原始文字中；请检查是否漏了课程。',
+                )}
               </p>
             )}
             {!courses.length ? (
               <div className="import-empty-state">
-                {rawText
-                  ? '已读取文字，但暂未可靠识别出课程。可以手动新增，或继续查看原始 OCR 结果。'
-                  : '选择一张课表截图并点击 Recognize，识别结果会显示在这里。'}
-                {rawText && (
+                {sourceMode === 'MOBILE' && mobileAnalysis
+                  ? t(
+                      '手机课表结构预览已完成。本阶段尚未进入逐块文字解析和课程导入，当前结果不会写入正式课程。',
+                    )
+                  : rawText
+                    ? t(
+                        '已读取文字，但暂未可靠识别出课程。可以手动新增，或继续查看原始 OCR 结果。',
+                      )
+                    : t(
+                        '选择一张课表截图并点击 Recognize，识别结果会显示在这里。',
+                      )}
+                {rawText && sourceMode !== 'MOBILE' && (
                   <button
                     className="text-action"
                     onClick={addCourse}
                     type="button"
                   >
-                    ＋ 手动新增课程
+                    {t('＋ 手动新增课程')}
                   </button>
                 )}
               </div>
@@ -1060,7 +1234,7 @@ export function TimetableImport({
                             }}
                             type="checkbox"
                           />
-                          导入
+                          {t('导入')}
                         </label>
                         <span
                           className={
@@ -1069,10 +1243,10 @@ export function TimetableImport({
                               : 'course-ready-state'
                           }
                         >
-                          {validation.errors.length ? '待确认' : '已填写'}
+                          {t(validation.errors.length ? '待确认' : '已填写')}
                         </span>
                         <button
-                          aria-label={`删除识别课程 ${course.courseName || '未命名课程'}`}
+                          aria-label={`${t('删除识别课程')} ${course.courseName || t('未命名课程')}`}
                           className="row-action delete-action"
                           onClick={() => {
                             markEdited(
@@ -1085,14 +1259,14 @@ export function TimetableImport({
                             });
                           }}
                           type="button"
-                          title="从本次导入移除"
+                          title={t('从本次导入移除')}
                         >
                           ×
                         </button>
                       </div>
                       <div className="import-field-grid">
                         <label>
-                          课程名称
+                          {t('课程名称')}
                           <input
                             maxLength={120}
                             onChange={(event) =>
@@ -1100,12 +1274,12 @@ export function TimetableImport({
                                 courseName: event.target.value,
                               })
                             }
-                            placeholder="必填"
+                            placeholder={t('必填')}
                             value={course.courseName}
                           />
                         </label>
                         <label>
-                          星期
+                          {t('星期')}
                           <select
                             onChange={(event) =>
                               updateCourse(course.id, {
@@ -1116,7 +1290,7 @@ export function TimetableImport({
                             }
                             value={course.weekday ?? ''}
                           >
-                            <option value="">请选择</option>
+                            <option value="">{t('请选择')}</option>
                             {weekdays.map((day, index) => (
                               <option key={day} value={index + 1}>
                                 {day}
@@ -1125,7 +1299,7 @@ export function TimetableImport({
                           </select>
                         </label>
                         <label>
-                          开始时间
+                          {t('开始时间')}
                           <input
                             onChange={(event) =>
                               updateCourse(course.id, {
@@ -1137,7 +1311,7 @@ export function TimetableImport({
                           />
                         </label>
                         <label>
-                          结束时间
+                          {t('结束时间')}
                           <input
                             onChange={(event) =>
                               updateCourse(course.id, {
@@ -1149,7 +1323,7 @@ export function TimetableImport({
                           />
                         </label>
                         <label>
-                          第几周开始
+                          {t('第几周开始')}
                           <input
                             max={semesterWeeks}
                             min="1"
@@ -1165,7 +1339,7 @@ export function TimetableImport({
                           />
                         </label>
                         <label>
-                          第几周结束
+                          {t('第几周结束')}
                           <input
                             max={semesterWeeks}
                             min="1"
@@ -1181,7 +1355,7 @@ export function TimetableImport({
                           />
                         </label>
                         <label>
-                          重复规则
+                          {t('重复规则')}
                           <select
                             onChange={(event) =>
                               updateCourse(course.id, {
@@ -1195,16 +1369,16 @@ export function TimetableImport({
                             }
                             value={course.recurrenceType ?? ''}
                           >
-                            <option value="">请选择</option>
+                            <option value="">{t('请选择')}</option>
                             {recurrenceOptions.map(([value, label]) => (
                               <option key={value} value={value}>
-                                {label}
+                                {t(label)}
                               </option>
                             ))}
                           </select>
                         </label>
                         <label>
-                          教室
+                          {t('教室')}
                           <input
                             maxLength={120}
                             onChange={(event) =>
@@ -1212,12 +1386,12 @@ export function TimetableImport({
                                 classroom: event.target.value,
                               })
                             }
-                            placeholder="可选"
+                            placeholder={t('可选')}
                             value={course.classroom}
                           />
                         </label>
                         <label>
-                          教师
+                          {t('教师')}
                           <input
                             maxLength={120}
                             onChange={(event) =>
@@ -1225,12 +1399,12 @@ export function TimetableImport({
                                 teacher: event.target.value,
                               })
                             }
-                            placeholder="可选"
+                            placeholder={t('可选')}
                             value={course.teacher}
                           />
                         </label>
                         <label>
-                          起始节次
+                          {t('起始节次')}
                           <select
                             onChange={(event) => {
                               const periodStart = event.target.value
@@ -1253,16 +1427,16 @@ export function TimetableImport({
                             }}
                             value={course.periodStart ?? ''}
                           >
-                            <option value="">不使用节次</option>
+                            <option value="">{t('不使用节次')}</option>
                             {Array.from({ length: 24 }, (_, index) => (
                               <option key={index + 1} value={index + 1}>
-                                第 {index + 1} 节
+                                {t('第')} {index + 1} {t('节')}
                               </option>
                             ))}
                           </select>
                         </label>
                         <label>
-                          结束节次
+                          {t('结束节次')}
                           <select
                             onChange={(event) => {
                               const periodEnd = event.target.value
@@ -1279,17 +1453,17 @@ export function TimetableImport({
                             }}
                             value={course.periodEnd ?? ''}
                           >
-                            <option value="">不使用节次</option>
+                            <option value="">{t('不使用节次')}</option>
                             {Array.from({ length: 24 }, (_, index) => (
                               <option key={index + 1} value={index + 1}>
-                                第 {index + 1} 节
+                                {t('第')} {index + 1} {t('节')}
                               </option>
                             ))}
                           </select>
                         </label>
                         {course.recurrenceType === 'CUSTOM' && (
                           <label className="custom-weeks-field">
-                            指定周次
+                            {t('指定周次')}
                             <input
                               onChange={(event) => {
                                 const weeks = [
@@ -1303,7 +1477,7 @@ export function TimetableImport({
                                 ].sort((a, b) => a - b);
                                 updateCourse(course.id, { customWeeks: weeks });
                               }}
-                              placeholder="例如：1, 3, 8, 12"
+                              placeholder={t('例如：1, 3, 8, 12')}
                               value={course.customWeeks.join(', ')}
                             />
                           </label>
@@ -1313,12 +1487,14 @@ export function TimetableImport({
                         (!periodTemplateSaved ||
                           !periodDrafts[course.periodStart - 1]?.startTime) && (
                           <p className="parse-note">
-                            识别到第 {course.periodStart}
+                            {t('识别到第')} {course.periodStart}
                             {course.periodEnd &&
                             course.periodEnd !== course.periodStart
                               ? `–${course.periodEnd}`
                               : ''}{' '}
-                            节，但尚无完整时间模板；请设置节次时间或手动填写钟点。
+                            {t(
+                              '节，但尚无完整时间模板；请设置节次时间或手动填写钟点。',
+                            )}
                           </p>
                         )}
                       {(validation.errors.length > 0 ||
@@ -1331,14 +1507,15 @@ export function TimetableImport({
                                 ...validation.errors,
                               ]),
                             ].map((item) => (
-                              <li key={item}>{item}</li>
+                              <li key={item}>{t(item)}</li>
                             ))}
                           </ul>
                         )}
                       {duplicate && (
                         <div className="duplicate-choice">
                           <span>
-                            可能与已有/本批课程重复：{duplicate.title}
+                            {t('可能与已有/本批课程重复：')}
+                            {duplicate.title}
                           </span>
                           <select
                             onChange={(event) =>
@@ -1351,18 +1528,20 @@ export function TimetableImport({
                             }
                             value={duplicateActions[course.id] ?? 'skip'}
                           >
-                            <option value="skip">跳过这条（默认）</option>
-                            <option value="keep">仍然保留</option>
+                            <option value="skip">
+                              {t('跳过这条（默认）')}
+                            </option>
+                            <option value="keep">{t('仍然保留')}</option>
                           </select>
                         </div>
                       )}
                       {conflicts.length > 0 && (
                         <p className="conflict-warning">
-                          时间冲突提示：
+                          {t('时间冲突提示：')}
                           {conflicts
                             .map((item) => item.secondCourseName)
                             .join('、')}
-                          。可继续导入，建议核对。
+                          {t('。可继续导入，建议核对。')}
                         </p>
                       )}
                       <label className="review-confirm">
@@ -1375,18 +1554,18 @@ export function TimetableImport({
                           }
                           type="checkbox"
                         />
-                        我已对照原图核对这门课
+                        {t('我已对照原图核对这门课')}
                       </label>
                       <details className="course-raw-details">
                         <summary>
-                          原始识别文字{' '}
+                          {t('原始识别文字')}{' '}
                           {course.confidence === null
                             ? ''
                             : `· 行置信度 ${Math.round(course.confidence)}`}
                         </summary>
                         <pre>
                           {course.sourceText ||
-                            '手动新增课程，没有原始 OCR 文字。'}
+                            t('手动新增课程，没有原始 OCR 文字。')}
                         </pre>
                       </details>
                     </article>
@@ -1396,9 +1575,9 @@ export function TimetableImport({
             )}
             <div className="import-review-footer">
               <span>
-                {includedCourses.length} 门勾选课程 ·{' '}
+                {includedCourses.length} {t('门勾选课程 ·')}{' '}
                 {readyCourses.filter((item) => !item.input).length}{' '}
-                门需补全或核对
+                {t('门需补全或核对')}
               </span>
               {!analysisState ? (
                 <button
@@ -1407,7 +1586,7 @@ export function TimetableImport({
                   onClick={() => void analyze()}
                   type="button"
                 >
-                  {analyzing ? '检查中…' : '检查重复与冲突'}
+                  {analyzing ? t('检查中…') : t('检查重复与冲突')}
                 </button>
               ) : (
                 <button
@@ -1417,8 +1596,10 @@ export function TimetableImport({
                   type="button"
                 >
                   {importing
-                    ? '导入中…'
-                    : `确认导入 ${analysisState.courseIds.length} 门`}
+                    ? t('导入中…')
+                    : t('确认导入 {{count}} 门', {
+                        count: analysisState.courseIds.length,
+                      })}
                 </button>
               )}
             </div>
@@ -1428,7 +1609,7 @@ export function TimetableImport({
 
       {existingCourses.length === 0 && (
         <p className="import-first-course-note">
-          此学期目前还没有课程，确认后将建立第一批课程记录。
+          {t('此学期目前还没有课程，确认后将建立第一批课程记录。')}
         </p>
       )}
     </section>

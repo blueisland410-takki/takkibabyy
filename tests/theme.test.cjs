@@ -2,14 +2,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
-const { parseThemeId } = require('../.test-output/validation.js');
+const { parseThemeId } = require('../.test-output/src/validation.js');
 const {
   THEME_OPTIONS,
   contrastRatio,
   getThemeTokens,
-} = require('../.test-output/theme.js');
+} = require('../.test-output/src/theme.js');
 
-test('all six themes use the requested accent and background colors', () => {
+test('all nine themes use their requested accent, background, and subtle colors', () => {
   assert.deepEqual(
     THEME_OPTIONS.map(({ id, accent, background }) => [
       id,
@@ -23,6 +23,27 @@ test('all six themes use the requested accent and background colors', () => {
       ['misty-blue', '#97acbc', '#eff3f6'],
       ['muted-lavender', '#b3a4bd', '#f3f0f6'],
       ['oat-beige', '#b8a58e', '#f6f2eb'],
+      ['mint-pop', '#46d9ad', '#e9fff7'],
+      ['sapphire', '#315ce8', '#edf1ff'],
+      ['y2k-pink', '#ff65c3', '#fff0fa'],
+    ],
+  );
+});
+
+test('the three playful themes preserve the requested subtle fills', () => {
+  assert.deepEqual(
+    THEME_OPTIONS.filter(({ group }) => group === 'pop').map(
+      ({ id, accent, background, subtle }) => [
+        id,
+        accent.toLowerCase(),
+        background.toLowerCase(),
+        subtle.toLowerCase(),
+      ],
+    ),
+    [
+      ['mint-pop', '#46d9ad', '#e9fff7', '#b9f5e0'],
+      ['sapphire', '#315ce8', '#edf1ff', '#c6d3ff'],
+      ['y2k-pink', '#ff65c3', '#fff0fa', '#ffc6e9'],
     ],
   );
 });
@@ -57,7 +78,7 @@ test('every theme keeps normal and button text at WCAG AA contrast', () => {
   }
 });
 
-test('theme preference validation accepts only the six supported ids', () => {
+test('theme preference validation accepts only the nine supported ids', () => {
   for (const theme of THEME_OPTIONS)
     assert.equal(parseThemeId(theme.id), theme.id);
   for (const invalid of ['Classic', 'rose', '', null, undefined, 1])

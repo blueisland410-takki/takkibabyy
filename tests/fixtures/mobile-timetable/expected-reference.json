@@ -1,0 +1,56 @@
+{
+  "teachingWeek": 8,
+  "visibleOnly": true,
+  "semesterRecurrenceInferenceAllowed": false,
+  "periodClockTimesAvailable": false,
+  "expectedVisibleBlocks": [
+    {
+      "weekday": 1,
+      "periodStart": 1,
+      "periodEnd": 2,
+      "courseName": "移动端动态视觉设计"
+    },
+    {
+      "weekday": 1,
+      "periodStart": 5,
+      "periodEnd": 6,
+      "courseName": "数字视频编辑"
+    },
+    {
+      "weekday": 1,
+      "periodStart": 7,
+      "periodEnd": 8,
+      "courseName": "数字视频编辑"
+    },
+    {
+      "weekday": 3,
+      "periodStart": 1,
+      "periodEnd": 2,
+      "courseName": "形势与政策"
+    },
+    {
+      "weekday": 4,
+      "periodStart": 1,
+      "periodEnd": 2,
+      "courseName": "生成式人工智能技术"
+    },
+    { "weekday": 4, "periodStart": 7, "periodEnd": 8, "courseName": "体育3" },
+    {
+      "weekday": 5,
+      "periodStart": 1,
+      "periodEnd": 2,
+      "courseName": "界面交互设计"
+    },
+    {
+      "weekday": 5,
+      "periodStart": 3,
+      "periodEnd": 4,
+      "courseName": "界面交互设计"
+    }
+  ],
+  "notes": [
+    "Tuesday has no visible course block.",
+    "The screenshot is cropped at the right edge; do not infer unseen classes.",
+    "All blocks belong to the visible week 8 only unless the user explicitly confirms a semester recurrence rule."
+  ]
+}

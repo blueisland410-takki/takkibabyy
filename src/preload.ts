@@ -18,6 +18,7 @@ import type {
   EventInput,
   EventUpdate,
   FontSizeScale,
+  LanguageId,
   ThemeId,
   MoveDirection,
   Semester,
@@ -43,15 +44,21 @@ import {
   parseSemesterInput,
   parseTaskInput,
   parseTaskUpdate,
+  parseFontSizeScale,
+  parseLanguageId,
   parseThemeId,
 } from './validation';
 
 const initialTheme = parseThemeId(
   ipcRenderer.sendSync('settings:get-initial-theme'),
 );
+const initialLanguage = parseLanguageId(
+  ipcRenderer.sendSync('settings:get-initial-language'),
+);
 
 contextBridge.exposeInMainWorld('dayByDay', {
   initialTheme,
+  initialLanguage,
   getAlwaysOnTop: (): Promise<boolean> =>
     ipcRenderer.invoke('window:get-always-on-top'),
   toggleAlwaysOnTop: (): Promise<boolean> =>
@@ -71,6 +78,32 @@ contextBridge.exposeInMainWorld('dayByDay', {
   },
   setTheme: (themeId: ThemeId): Promise<ThemeId> =>
     ipcRenderer.invoke('settings:set-theme', parseThemeId(themeId)),
+  setLanguage: (languageId: LanguageId): Promise<LanguageId> =>
+    ipcRenderer.invoke('settings:set-language', parseLanguageId(languageId)),
+  onPreferencesChanged: (
+    callback: (preferences: {
+      themeId: ThemeId;
+      languageId: LanguageId;
+      fontSizeScale: FontSizeScale;
+    }) => void,
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const record = value as Record<string, unknown>;
+      try {
+        callback({
+          themeId: parseThemeId(record.themeId),
+          languageId: parseLanguageId(record.languageId),
+          fontSizeScale: parseFontSizeScale(record.fontSizeScale),
+        });
+      } catch {
+        // Ignore malformed preference messages from outside the main process.
+      }
+    };
+    ipcRenderer.on('settings:preferences-changed', listener);
+    return () =>
+      ipcRenderer.removeListener('settings:preferences-changed', listener);
+  },
   getDay: (date: string): Promise<DayData> => {
     assertDateKey(date);
     return ipcRenderer.invoke('planner:get-day', date);

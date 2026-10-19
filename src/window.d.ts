@@ -17,6 +17,7 @@ import type {
   EventInput,
   EventUpdate,
   FontSizeScale,
+  LanguageId,
   ThemeId,
   MoveDirection,
   Semester,
@@ -33,6 +34,7 @@ declare global {
   interface Window {
     dayByDay: {
       initialTheme: ThemeId;
+      initialLanguage: LanguageId;
       getAlwaysOnTop: () => Promise<boolean>;
       toggleAlwaysOnTop: () => Promise<boolean>;
       minimizeWindow: () => Promise<void>;
@@ -41,6 +43,14 @@ declare global {
       getFontSizeScale: () => Promise<FontSizeScale>;
       setFontSizeScale: (scale: FontSizeScale) => Promise<FontSizeScale>;
       setTheme: (themeId: ThemeId) => Promise<ThemeId>;
+      setLanguage: (languageId: LanguageId) => Promise<LanguageId>;
+      onPreferencesChanged: (
+        callback: (preferences: {
+          themeId: ThemeId;
+          languageId: LanguageId;
+          fontSizeScale: FontSizeScale;
+        }) => void,
+      ) => () => void;
       getDay: (date: string) => Promise<DayData>;
       createTask: (input: TaskInput) => Promise<Task>;
       updateTask: (input: TaskUpdate) => Promise<Task>;

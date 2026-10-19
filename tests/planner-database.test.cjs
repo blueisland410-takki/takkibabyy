@@ -4,20 +4,20 @@ const os = require('node:os');
 const path = require('node:path');
 const { afterEach, test } = require('node:test');
 const BetterSqlite3 = require('better-sqlite3');
-const { PlannerDatabase } = require('../.test-output/database.js');
+const { PlannerDatabase } = require('../.test-output/src/database.js');
 const {
   parseEventInput,
   parseTaskInput,
   parseCourseInput,
   parseSemesterInput,
   parseFontSizeScale,
-} = require('../.test-output/validation.js');
+} = require('../.test-output/src/validation.js');
 const {
   courseDateForWeek,
   getTeachingWeekNumber,
   shiftDateKey,
-} = require('../.test-output/courseSchedule.js');
-const { mergeAgendaItems } = require('../.test-output/scheduleView.js');
+} = require('../.test-output/src/courseSchedule.js');
+const { mergeAgendaItems } = require('../.test-output/src/scheduleView.js');
 
 test('font size preferences accept only the four supported persisted scales', () => {
   assert.deepEqual(

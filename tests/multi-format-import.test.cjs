@@ -11,8 +11,8 @@ const {
   parseCsvImport,
   parseIcsImport,
   parseXlsxImport,
-} = require('../.test-output/importParsers.js');
-const { PlannerDatabase } = require('../.test-output/database.js');
+} = require('../.test-output/src/importParsers.js');
+const { PlannerDatabase } = require('../.test-output/src/database.js');
 
 const semester = {
   id: 'semester-import-test',

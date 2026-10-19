@@ -13,10 +13,11 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PlannerDatabase, type SqliteDatabaseConstructor } from './database';
-import { isThemeId } from './theme';
+import { getThemeDefinition, isThemeId } from './theme';
 import type {
   CourseImportDecision,
   FontSizeScale,
+  LanguageId,
   MoveDirection,
   ThemeId,
 } from './domain';
@@ -24,6 +25,7 @@ import {
   assertDateKey,
   assertId,
   parseFontSizeScale,
+  parseLanguageId,
   parseThemeId,
   parseCourseExceptionInput,
   parseCourseImportDecisions,
@@ -69,6 +71,7 @@ type SavedWindowState = {
   alwaysOnTop: boolean;
   fontSizeScale: FontSizeScale;
   themeId: ThemeId;
+  languageId: LanguageId;
 };
 
 let mainWindow: BrowserWindow | undefined;
@@ -77,6 +80,7 @@ let plannerDatabase: PlannerDatabase | undefined;
 let boundsBeforeImportMode: Rectangle | undefined;
 let currentFontSizeScale: FontSizeScale = 1;
 let currentThemeId: ThemeId = 'classic';
+let currentLanguageId: LanguageId = 'zh-CN';
 
 if (started) {
   app.quit();
@@ -140,6 +144,14 @@ const readWindowState = (): SavedWindowState => {
         ? parsed.fontSizeScale
         : 1,
       themeId: isThemeId(parsed.themeId) ? parsed.themeId : 'classic',
+      languageId:
+        parsed.languageId === 'zh-CN' ||
+        parsed.languageId === 'zh-TW' ||
+        parsed.languageId === 'ja-JP' ||
+        parsed.languageId === 'ko-KR' ||
+        parsed.languageId === 'en-US'
+          ? parsed.languageId
+          : 'zh-CN',
     };
   } catch {
     return {
@@ -148,6 +160,7 @@ const readWindowState = (): SavedWindowState => {
       alwaysOnTop: false,
       fontSizeScale: 1,
       themeId: 'classic',
+      languageId: 'zh-CN',
     };
   }
 };
@@ -210,6 +223,7 @@ const saveWindowState = (): boolean => {
     alwaysOnTop: mainWindow.isAlwaysOnTop(),
     fontSizeScale: currentFontSizeScale,
     themeId: currentThemeId,
+    languageId: currentLanguageId,
   };
 
   try {
@@ -328,6 +342,26 @@ const registerWindowControls = () => {
         ? currentThemeId
         : 'classic';
   });
+  ipcMain.on('settings:get-initial-language', (event: IpcMainEvent) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    event.returnValue =
+      mainWindow &&
+      senderWindow === mainWindow &&
+      event.senderFrame === event.sender.mainFrame
+        ? currentLanguageId
+        : 'zh-CN';
+  });
+  const broadcastPreferences = () => {
+    const preferences = {
+      themeId: currentThemeId,
+      languageId: currentLanguageId,
+      fontSizeScale: currentFontSizeScale,
+    };
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed())
+        window.webContents.send('settings:preferences-changed', preferences);
+    }
+  };
   ipcMain.handle('window:get-always-on-top', (event) =>
     getTrustedWindow(event).isAlwaysOnTop(),
   );
@@ -376,6 +410,7 @@ const registerWindowControls = () => {
         '字体设置未能保存到本机，请检查用户数据目录写入权限后重试。',
       );
     }
+    broadcastPreferences();
     return currentFontSizeScale;
   });
   ipcMain.handle('settings:set-theme', (event, value: unknown) => {
@@ -388,7 +423,21 @@ const registerWindowControls = () => {
         '主题设置未能保存到本机，请检查用户数据目录写入权限后重试。',
       );
     }
+    broadcastPreferences();
     return currentThemeId;
+  });
+  ipcMain.handle('settings:set-language', (event, value: unknown) => {
+    getTrustedWindow(event);
+    const previousValue = currentLanguageId;
+    currentLanguageId = parseLanguageId(value);
+    if (!saveWindowState()) {
+      currentLanguageId = previousValue;
+      throw new Error(
+        '语言设置未能保存到本机，请检查用户数据目录写入权限后重试。',
+      );
+    }
+    broadcastPreferences();
+    return currentLanguageId;
   });
 
   ipcMain.handle('planner:get-day', (event, date: unknown) => {
@@ -587,6 +636,7 @@ const createWindow = () => {
   const savedState = readWindowState();
   currentFontSizeScale = savedState.fontSizeScale;
   currentThemeId = savedState.themeId;
+  currentLanguageId = savedState.languageId;
   const bounds = getInitialBounds(savedState);
   const options: BrowserWindowConstructorOptions = {
     title: 'Daybyday',
@@ -595,7 +645,7 @@ const createWindow = () => {
     minHeight: MIN_HEIGHT,
     frame: false,
     resizable: true,
-    backgroundColor: '#F5F5F3',
+    backgroundColor: getThemeDefinition(savedState.themeId).background,
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
