@@ -9,6 +9,12 @@ import type {
   CourseImportDecision,
   CourseImportResult,
   CourseInput,
+  ImportBatchAnalysis,
+  ImportBatchDecision,
+  ImportBatchPayload,
+  ImportBatchResult,
+  ImportBatchSummary,
+  ImportBatchUndoResult,
   CourseOccurrence,
   Event,
   EventInput,
@@ -28,7 +34,7 @@ import {
 import { analyzeCourseImport as analyzeCourseImportRows } from './courseImport';
 import { assertDateKey } from './validation';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export type SqliteDatabaseConstructor = typeof Database;
 
@@ -424,6 +430,367 @@ export class PlannerDatabase {
       })
       .immediate();
     return { importedCount, skippedCount };
+  }
+
+  analyzeImportBatch(payload: ImportBatchPayload): ImportBatchAnalysis {
+    const semesterRow = this.findSemester(payload.options.semesterId);
+    if (!semesterRow) throw new Error('导入目标学期已不存在，请重新选择。');
+    const semester = semesterFromRow(semesterRow);
+    const courseItems = payload.items.flatMap((item, itemIndex) =>
+      item.kind === 'course' ? [{ item, itemIndex }] : [],
+    );
+    const courseInputs = courseItems.map(({ item }) => item.input);
+    for (const { item } of courseItems) {
+      this.assertCourseWeeksFitSemester(item.input, semesterRow);
+      for (const exception of item.exceptions) {
+        assertDateKey(exception.originalDate);
+        assertDateKey(exception.replacementDate);
+        if (!courseOccursOnDate(item.input, semester, exception.originalDate)) {
+          throw new Error(
+            `课程“${item.input.courseName}”的原始调课日期 ${exception.originalDate} 不符合课程周次规则。`,
+          );
+        }
+        if (
+          exception.replacementDate < semester.startDate ||
+          exception.replacementDate > semester.endDate
+        ) {
+          throw new Error(
+            `课程“${item.input.courseName}”的调课日期超出学期范围。`,
+          );
+        }
+      }
+    }
+    for (const item of payload.items) {
+      if (
+        item.kind === 'event' &&
+        (item.input.eventDate < semester.startDate ||
+          item.input.eventDate > semester.endDate)
+      ) {
+        throw new Error(`日程“${item.input.title}”的日期不在目标学期范围内。`);
+      }
+    }
+
+    const courseAnalysis = analyzeCourseImportRows(
+      this.listCourses(payload.options.semesterId),
+      courseInputs,
+    );
+    const duplicates = new Map<
+      number,
+      ImportBatchAnalysis['duplicates'][number]
+    >();
+    for (const duplicate of courseAnalysis.duplicates) {
+      const itemIndex = courseItems[duplicate.courseIndex]?.itemIndex;
+      if (itemIndex !== undefined) {
+        duplicates.set(itemIndex, {
+          itemIndex,
+          reason: 'same-course',
+          title: duplicate.courseName,
+        });
+      }
+    }
+
+    const sourceDuplicateQuery = this.database.prepare(
+      `SELECT 1 AS found
+       FROM import_batch_items AS item
+       INNER JOIN import_batches AS batch ON batch.id = item.batch_id
+       WHERE batch.semester_id = ? AND batch.source_type = ?
+         AND item.source_id = ? AND batch.undone_at IS NULL
+         AND ((item.course_id IS NOT NULL AND EXISTS (SELECT 1 FROM courses WHERE id = item.course_id))
+           OR (item.event_id IS NOT NULL AND EXISTS (SELECT 1 FROM events WHERE id = item.event_id)))
+       LIMIT 1`,
+    );
+    const priorSourceIds = new Set<string>();
+    payload.items.forEach((item, itemIndex) => {
+      if (
+        sourceDuplicateQuery.get(
+          payload.options.semesterId,
+          payload.options.sourceType,
+          item.sourceId,
+        ) ||
+        priorSourceIds.has(item.sourceId)
+      ) {
+        duplicates.set(itemIndex, {
+          itemIndex,
+          reason: 'same-source',
+          title:
+            item.kind === 'course' ? item.input.courseName : item.input.title,
+        });
+      }
+      priorSourceIds.add(item.sourceId);
+    });
+
+    const conflicts = courseAnalysis.conflicts.map((conflict) => ({
+      ...conflict,
+      firstItemIndex: courseItems[conflict.firstCourseIndex]?.itemIndex ?? -1,
+      secondItemIndex: courseItems[conflict.secondCourseIndex]?.itemIndex ?? -1,
+    }));
+    return {
+      duplicates: [...duplicates.values()].sort(
+        (a, b) => a.itemIndex - b.itemIndex,
+      ),
+      conflicts,
+    };
+  }
+
+  importBatch(
+    payload: ImportBatchPayload,
+    decisions: ImportBatchDecision[],
+  ): ImportBatchResult {
+    const analysis = this.analyzeImportBatch(payload);
+    const duplicateIndexes = new Set(
+      analysis.duplicates.map(({ itemIndex }) => itemIndex),
+    );
+    const decisionByIndex = new Map(
+      decisions.map(({ itemIndex, action }) => [itemIndex, action]),
+    );
+    if (decisions.some(({ itemIndex }) => !duplicateIndexes.has(itemIndex))) {
+      throw new Error('导入重复项处理结果已过期，请重新检查后导入。');
+    }
+
+    if (!this.findSemester(payload.options.semesterId))
+      throw new Error('导入目标学期已不存在，请重新选择。');
+    const batchId = randomUUID();
+    const now = timestamp();
+    let importedCount = 0;
+    let importedEventCount = 0;
+    let skippedCount = 0;
+    const insertBatchItem = this.database.prepare(
+      `INSERT INTO import_batch_items (id, batch_id, item_type, source_id, course_id, event_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertCourse = this.database.prepare(
+      `INSERT INTO courses (id, semester_id, course_name, weekday, start_time, end_time, classroom, teacher, notes, first_week, last_week, recurrence_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertException = this.database.prepare(
+      `INSERT INTO course_exceptions (course_id, original_date, is_cancelled, replacement_date, start_time, end_time, classroom, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(course_id, original_date) DO UPDATE SET
+         is_cancelled = excluded.is_cancelled,
+         replacement_date = excluded.replacement_date,
+         start_time = excluded.start_time,
+         end_time = excluded.end_time,
+         classroom = excluded.classroom,
+         updated_at = excluded.updated_at`,
+    );
+    const insertEvent = this.database.prepare(
+      `INSERT INTO events (id, title, event_date, start_time, end_time, is_all_day, location, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this.database
+      .transaction(() => {
+        this.database
+          .prepare(
+            `INSERT INTO import_batches (id, semester_id, source_type, source_label, content_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            batchId,
+            payload.options.semesterId,
+            payload.options.sourceType,
+            payload.options.sourceLabel,
+            payload.options.contentHash,
+            now,
+          );
+
+        payload.items.forEach((item, itemIndex) => {
+          if (
+            duplicateIndexes.has(itemIndex) &&
+            decisionByIndex.get(itemIndex) !== 'keep'
+          ) {
+            skippedCount += 1;
+            return;
+          }
+          if (item.kind === 'course') {
+            const id = randomUUID();
+            const input = item.input;
+            insertCourse.run(
+              id,
+              input.semesterId,
+              input.courseName,
+              input.weekday,
+              input.startTime,
+              input.endTime,
+              input.classroom,
+              input.teacher,
+              input.notes,
+              input.firstWeek,
+              input.lastWeek,
+              input.recurrenceType,
+              now,
+              now,
+            );
+            this.replaceCustomWeeks(id, input.customWeeks);
+            for (const exception of item.exceptions) {
+              insertException.run(
+                id,
+                exception.originalDate,
+                exception.isCancelled ? 1 : 0,
+                exception.replacementDate,
+                exception.startTime,
+                exception.endTime,
+                exception.classroom,
+                now,
+                now,
+              );
+            }
+            insertBatchItem.run(
+              randomUUID(),
+              batchId,
+              'course',
+              item.sourceId,
+              id,
+              null,
+              now,
+            );
+            importedCount += 1;
+            return;
+          }
+
+          const id = randomUUID();
+          const input = item.input;
+          insertEvent.run(
+            id,
+            input.title,
+            input.eventDate,
+            input.startTime,
+            input.endTime,
+            input.isAllDay ? 1 : 0,
+            input.location,
+            input.notes,
+            now,
+            now,
+          );
+          insertBatchItem.run(
+            randomUUID(),
+            batchId,
+            'event',
+            item.sourceId,
+            null,
+            id,
+            now,
+          );
+          importedEventCount += 1;
+        });
+      })
+      .immediate();
+
+    return { batchId, importedCount, importedEventCount, skippedCount };
+  }
+
+  listImportBatches(semesterId: string): ImportBatchSummary[] {
+    const rows = this.database
+      .prepare(
+        `SELECT batch.id, batch.semester_id, batch.source_type, batch.source_label,
+                batch.content_hash, batch.created_at, batch.undone_at,
+                SUM(CASE WHEN item.item_type = 'course' THEN 1 ELSE 0 END) AS imported_course_count,
+                SUM(CASE WHEN item.item_type = 'event' THEN 1 ELSE 0 END) AS imported_event_count
+         FROM import_batches AS batch
+         LEFT JOIN import_batch_items AS item ON item.batch_id = batch.id
+         WHERE batch.semester_id = ?
+         GROUP BY batch.id
+         ORDER BY batch.created_at DESC
+         LIMIT 50`,
+      )
+      .all(semesterId) as Array<{
+      id: string;
+      semester_id: string;
+      source_type: ImportBatchSummary['sourceType'];
+      source_label: string;
+      content_hash: string;
+      created_at: string;
+      undone_at: string | null;
+      imported_course_count: number;
+      imported_event_count: number;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      semesterId: row.semester_id,
+      sourceType: row.source_type,
+      sourceLabel: row.source_label,
+      contentHash: row.content_hash,
+      createdAt: row.created_at,
+      undoneAt: row.undone_at,
+      importedCourseCount: row.imported_course_count ?? 0,
+      importedEventCount: row.imported_event_count ?? 0,
+    }));
+  }
+
+  undoImportBatch(batchId: string): ImportBatchUndoResult {
+    const batch = this.database
+      .prepare(
+        'SELECT id, created_at, undone_at FROM import_batches WHERE id = ?',
+      )
+      .get(batchId) as
+      | { id: string; created_at: string; undone_at: string | null }
+      | undefined;
+    if (!batch) throw new Error('找不到该导入批次。');
+    if (batch.undone_at) throw new Error('该导入批次已经撤销。');
+    const items = this.database
+      .prepare(
+        'SELECT item_type, course_id, event_id FROM import_batch_items WHERE batch_id = ?',
+      )
+      .all(batchId) as Array<{
+      item_type: 'course' | 'event';
+      course_id: string | null;
+      event_id: string | null;
+    }>;
+    let removedCourseCount = 0;
+    let removedEventCount = 0;
+    let retainedItemCount = 0;
+    this.database
+      .transaction(() => {
+        for (const item of items) {
+          if (item.item_type === 'course' && item.course_id) {
+            const course = this.database
+              .prepare('SELECT id, updated_at FROM courses WHERE id = ?')
+              .get(item.course_id) as
+              | { id: string; updated_at: string }
+              | undefined;
+            const changedException = this.database
+              .prepare(
+                'SELECT 1 AS found FROM course_exceptions WHERE course_id = ? AND (created_at <> ? OR updated_at <> ?) LIMIT 1',
+              )
+              .get(item.course_id, batch.created_at, batch.created_at);
+            const hasOtherBatch = this.database
+              .prepare(
+                'SELECT 1 AS found FROM import_batch_items WHERE course_id = ? AND batch_id <> ? LIMIT 1',
+              )
+              .get(item.course_id, batchId);
+            if (
+              course &&
+              course.updated_at === batch.created_at &&
+              !changedException &&
+              !hasOtherBatch
+            ) {
+              removedCourseCount += this.database
+                .prepare('DELETE FROM courses WHERE id = ?')
+                .run(item.course_id).changes;
+            } else if (course) {
+              retainedItemCount += 1;
+            }
+          } else if (item.item_type === 'event' && item.event_id) {
+            const event = this.database
+              .prepare('SELECT id, updated_at FROM events WHERE id = ?')
+              .get(item.event_id) as
+              | { id: string; updated_at: string }
+              | undefined;
+            if (event && event.updated_at === batch.created_at) {
+              removedEventCount += this.database
+                .prepare('DELETE FROM events WHERE id = ?')
+                .run(item.event_id).changes;
+            } else if (event) {
+              retainedItemCount += 1;
+            }
+          }
+        }
+        this.database
+          .prepare('UPDATE import_batches SET undone_at = ? WHERE id = ?')
+          .run(timestamp(), batchId);
+      })
+      .immediate();
+    return { removedCourseCount, removedEventCount, retainedItemCount };
   }
 
   createCourse(input: CourseInput): Course {
@@ -888,6 +1255,42 @@ export class PlannerDatabase {
         })
         .immediate();
       version = 3;
+    }
+    if (version === 3) {
+      this.database
+        .transaction(() => {
+          this.database.exec(`
+            CREATE TABLE import_batches (
+              id TEXT PRIMARY KEY NOT NULL,
+              semester_id TEXT NOT NULL REFERENCES semesters(id) ON DELETE RESTRICT,
+              source_type TEXT NOT NULL CHECK (source_type IN ('IMAGE', 'ICS', 'XLSX', 'CSV')),
+              source_label TEXT NOT NULL,
+              content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+              created_at TEXT NOT NULL,
+              undone_at TEXT
+            );
+            CREATE INDEX import_batches_by_semester ON import_batches(semester_id, created_at DESC);
+
+            CREATE TABLE import_batch_items (
+              id TEXT PRIMARY KEY NOT NULL,
+              batch_id TEXT NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+              item_type TEXT NOT NULL CHECK (item_type IN ('course', 'event')),
+              source_id TEXT NOT NULL,
+              course_id TEXT REFERENCES courses(id) ON DELETE CASCADE,
+              event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
+              created_at TEXT NOT NULL,
+              CHECK (
+                (item_type = 'course' AND course_id IS NOT NULL AND event_id IS NULL) OR
+                (item_type = 'event' AND event_id IS NOT NULL AND course_id IS NULL)
+              )
+            );
+            CREATE INDEX import_batch_items_by_source ON import_batch_items(source_id, item_type);
+            CREATE INDEX import_batch_items_by_batch ON import_batch_items(batch_id);
+          `);
+          this.database.pragma('user_version = 4');
+        })
+        .immediate();
+      version = 4;
     }
     if (version !== SCHEMA_VERSION)
       throw new Error(`不支持的数据库版本 ${version}，数据未被修改。`);

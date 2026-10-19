@@ -71,7 +71,7 @@ function line(text, x, y, confidence = 92, width = 70) {
   };
 }
 
-test('version 2 database receives the OCR period-template migration without changing saved courses or exceptions', () => {
+test('version 2 database receives additive OCR and import-history migrations without changing saved courses or exceptions', () => {
   temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), 'daybyday-v2-migration-'),
   );
@@ -103,7 +103,17 @@ test('version 2 database receives the OCR period-template migration without chan
     0,
   );
   const reopened = new BetterSqlite3(filePath);
-  assert.equal(reopened.pragma('user_version', { simple: true }), 3);
+  assert.equal(reopened.pragma('user_version', { simple: true }), 4);
+  assert.equal(
+    reopened.prepare('SELECT count(*) AS count FROM import_batches').get()
+      .count,
+    0,
+  );
+  assert.equal(
+    reopened.prepare('SELECT count(*) AS count FROM import_batch_items').get()
+      .count,
+    0,
+  );
   reopened.close();
 });
 

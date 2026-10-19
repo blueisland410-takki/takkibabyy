@@ -10,11 +10,15 @@ import {
 import Tesseract from 'tesseract.js';
 import type {
   Course,
-  CourseImportAnalysis,
   CourseInput,
+  ImportBatchAnalysis,
+  ImportBatchPayload,
+  ImportBatchSummary,
   RecurrenceType,
   Semester,
 } from './domain';
+import { StructuredImport } from './StructuredImport';
+import { sha256 } from './importParsers';
 import type { OcrLine, TimetableCourseDraft } from './timetableParser';
 import {
   ocrLinesFromBlocks,
@@ -30,7 +34,12 @@ type Props = {
 };
 
 type PeriodDraft = { periodNumber: number; startTime: string; endTime: string };
-type AnalysisState = { result: CourseImportAnalysis; courseIds: string[] };
+type AnalysisState = {
+  result: ImportBatchAnalysis;
+  courseIds: string[];
+  payload: ImportBatchPayload;
+};
+type ImportMode = 'IMAGE' | 'ICS' | 'XLSX' | 'CSV';
 
 const weekdays = [
   '星期一',
@@ -156,7 +165,9 @@ export function TimetableImport({
   onClose,
   onImported,
 }: Props) {
+  const [sourceMode, setSourceMode] = useState<ImportMode>('IMAGE');
   const [file, setFile] = useState<File | null>(null);
+  const [fileHash, setFileHash] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [imageSize, setImageSize] = useState('');
   const [scale, setScale] = useState(1);
@@ -193,6 +204,7 @@ export function TimetableImport({
   const [analyzing, setAnalyzing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [success, setSuccess] = useState('');
+  const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([]);
 
   const semesterWeeks = useMemo(() => localWeekCount(semester), [semester]);
   const includedCourses = courses.filter((course) =>
@@ -206,6 +218,10 @@ export function TimetableImport({
   const currentAnalysis = analysisState?.result;
 
   useEffect(() => {
+    void window.dayByDay
+      .listImportBatches(semester.id)
+      .then(setImportBatches)
+      .catch((failure: unknown) => setError(errorText(failure)));
     void window.dayByDay
       .setImportWindowMode(true)
       .catch((failure: unknown) => setError(errorText(failure)));
@@ -291,8 +307,10 @@ export function TimetableImport({
       if (width * height > maxImagePixels)
         throw new Error('图片像素超过 3000 万，请先缩小后再试。');
       const url = URL.createObjectURL(nextFile);
+      const contentHash = await sha256(await nextFile.arrayBuffer());
       setPreviewUrl(url);
       setFile(nextFile);
+      setFileHash(contentHash);
       setImageSize(`${width} × ${height}`);
       setScale(1);
       setPan({ x: 0, y: 0 });
@@ -478,6 +496,10 @@ export function TimetableImport({
 
   const analyze = async () => {
     const invalid = readyCourses.filter((item) => !item.input);
+    if (!file || !fileHash) {
+      setError('请先选择课表图片；也可以在图片上校对漏识别的课程。');
+      return;
+    }
     if (invalid.length || !importableCourses.length) {
       setError(
         '请补全所有勾选课程的必填项、周次和时间，并勾选“已对照原图核对”。',
@@ -489,19 +511,31 @@ export function TimetableImport({
     setSuccess('');
     try {
       const inputs = importableCourses.map((item) => item.input as CourseInput);
-      const result = await window.dayByDay.analyzeCourseImport(
-        semester.id,
-        inputs,
-      );
+      const payload: ImportBatchPayload = {
+        options: {
+          semesterId: semester.id,
+          sourceType: 'IMAGE',
+          sourceLabel: file.name,
+          contentHash: fileHash,
+        },
+        items: importableCourses.map((item, index) => ({
+          kind: 'course' as const,
+          sourceId: `${fileHash}:${item.course.id}:${index}`,
+          input: item.input as CourseInput,
+          exceptions: [],
+        })),
+      };
+      const result = await window.dayByDay.analyzeImportBatch(payload);
       setAnalysisState({
         result,
         courseIds: importableCourses.map((item) => item.course.id),
+        payload,
       });
       setDuplicateActions(
         Object.fromEntries(
           result.duplicates
             .map((duplicate) => {
-              const id = importableCourses[duplicate.courseIndex]?.course.id;
+              const id = importableCourses[duplicate.itemIndex]?.course.id;
               return id ? [id, 'skip'] : ['', 'skip'];
             })
             .filter(([id]) => Boolean(id)),
@@ -526,26 +560,18 @@ export function TimetableImport({
     setImporting(true);
     setError('');
     try {
-      const inputById = new Map(
-        readyCourses
-          .filter((item) => item.input)
-          .map((item) => [item.course.id, item.input as CourseInput]),
-      );
-      const inputs = analysisState.courseIds
-        .map((id) => inputById.get(id))
-        .filter((item): item is CourseInput => Boolean(item));
       const decisions = currentAnalysis.duplicates.map((duplicate) => ({
-        courseIndex: duplicate.courseIndex,
+        itemIndex: duplicate.itemIndex,
         action:
-          duplicateActions[analysisState.courseIds[duplicate.courseIndex]] ??
+          duplicateActions[analysisState.courseIds[duplicate.itemIndex]] ??
           'skip',
       }));
-      const result = await window.dayByDay.importCourses(
-        semester.id,
-        inputs,
+      const result = await window.dayByDay.importBatch(
+        analysisState.payload,
         decisions,
       );
       setAnalysisState(null);
+      setImportBatches(await window.dayByDay.listImportBatches(semester.id));
       setSuccess(
         `导入完成：新增 ${result.importedCount} 门课程，跳过 ${result.skippedCount} 条重复课程。`,
       );
@@ -555,6 +581,26 @@ export function TimetableImport({
         `课程未导入，原有课程保持不变：${errorText(failure)}。请重新检查后重试。`,
       );
       setAnalysisState(null);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const undoImportBatch = async (batchId: string) => {
+    if (importing) return;
+    if (!window.confirm('仅撤销此批次新增且之后没有修改的课程。继续吗？'))
+      return;
+    setImporting(true);
+    setError('');
+    try {
+      const result = await window.dayByDay.undoImportBatch(batchId);
+      setImportBatches(await window.dayByDay.listImportBatches(semester.id));
+      setSuccess(
+        `批次已撤销：移除 ${result.removedCourseCount} 门课程；${result.retainedItemCount} 门因导入后有修改而保留。`,
+      );
+      onImported();
+    } catch (failure) {
+      setError(`撤销失败：${errorText(failure)}`);
     } finally {
       setImporting(false);
     }
@@ -581,6 +627,60 @@ export function TimetableImport({
     panStart.current = null;
   };
 
+  const methodButtons = (
+    <nav aria-label="导入格式" className="import-method-switch">
+      {(
+        [
+          ['IMAGE', 'Import from image'],
+          ['ICS', 'Import ICS'],
+          ['XLSX', 'Import Excel'],
+          ['CSV', 'Import CSV'],
+        ] as Array<[ImportMode, string]>
+      ).map(([mode, label]) => (
+        <button
+          aria-pressed={sourceMode === mode}
+          className={sourceMode === mode ? 'is-selected' : ''}
+          key={mode}
+          onClick={() => setSourceMode(mode)}
+          type="button"
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="future-import-method"
+        disabled
+        title="PDF / DOCX 将在检查点 C 实现"
+        type="button"
+      >
+        Import document · C 阶段
+      </button>
+    </nav>
+  );
+
+  if (sourceMode !== 'IMAGE') {
+    return (
+      <section aria-label="课程导入" className="timetable-import">
+        <div className="import-heading">
+          <div>
+            <p className="eyebrow">SMART TIMETABLE IMPORT</p>
+            <h1>导入课程表</h1>
+            <p className="import-semester">
+              目标学期：{semester.semesterName} · {semesterWeeks} 周
+            </p>
+          </div>
+        </div>
+        {methodButtons}
+        <StructuredImport
+          onClose={onClose}
+          onImported={onImported}
+          semester={semester}
+          sourceType={sourceMode}
+        />
+      </section>
+    );
+  }
+
   return (
     <section aria-label="课表截图导入" className="timetable-import">
       <div className="import-heading">
@@ -595,6 +695,36 @@ export function TimetableImport({
           返回课程列表
         </button>
       </div>
+
+      {methodButtons}
+
+      {importBatches.length > 0 && (
+        <section className="import-batch-history" aria-label="导入记录">
+          <strong>最近导入记录</strong>
+          {importBatches.map((batch) => (
+            <div className="import-batch-row" key={batch.id}>
+              <span>
+                {batch.sourceLabel} ·{' '}
+                {new Date(batch.createdAt).toLocaleString()} ·{' '}
+                {batch.importedCourseCount} 门课程 / {batch.importedEventCount}{' '}
+                条日程
+                {batch.undoneAt ? ' · 已撤销' : ''}
+              </span>
+              {!batch.undoneAt &&
+                batch.importedCourseCount + batch.importedEventCount > 0 && (
+                  <button
+                    className="quiet-button compact-button"
+                    disabled={importing}
+                    onClick={() => void undoImportBatch(batch.id)}
+                    type="button"
+                  >
+                    撤销此批次
+                  </button>
+                )}
+            </div>
+          ))}
+        </section>
+      )}
 
       {(error || success) && (
         <div
@@ -642,6 +772,7 @@ export function TimetableImport({
                     className="quiet-button compact-button"
                     onClick={() => {
                       setFile(null);
+                      setFileHash('');
                       setPreviewUrl('');
                       setCourses([]);
                       setRawText('');
@@ -899,7 +1030,7 @@ export function TimetableImport({
                   const included = includedIds.has(course.id);
                   const duplicate = currentAnalysis?.duplicates.find(
                     (item) =>
-                      analysisState?.courseIds[item.courseIndex] === course.id,
+                      analysisState?.courseIds[item.itemIndex] === course.id,
                   );
                   const conflicts =
                     currentAnalysis?.conflicts.filter(
@@ -1207,7 +1338,7 @@ export function TimetableImport({
                       {duplicate && (
                         <div className="duplicate-choice">
                           <span>
-                            可能与已有/本批课程重复：{duplicate.courseName}
+                            可能与已有/本批课程重复：{duplicate.title}
                           </span>
                           <select
                             onChange={(event) =>

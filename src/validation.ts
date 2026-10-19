@@ -2,6 +2,10 @@ import type {
   ClassPeriodTime,
   CourseExceptionInput,
   CourseInput,
+  ImportBatchDecision,
+  ImportBatchPayload,
+  ImportExceptionDraft,
+  ImportSourceType,
   RecurrenceType,
   SemesterInput,
   SeriesExceptionPolicy,
@@ -269,6 +273,119 @@ export function parseCourseImportDecisions(
     }
     seen.add(courseIndex as number);
     return { courseIndex: courseIndex as number, action: item.action };
+  });
+}
+
+export function parseImportBatchPayload(value: unknown): ImportBatchPayload {
+  const payload = record(value, '导入批次');
+  const options = record(payload.options, '导入来源');
+  assertId(options.semesterId);
+  const sourceTypes: ImportSourceType[] = ['IMAGE', 'ICS', 'XLSX', 'CSV'];
+  if (
+    typeof options.sourceType !== 'string' ||
+    !sourceTypes.includes(options.sourceType as ImportSourceType)
+  ) {
+    throw new Error('导入文件格式无效。');
+  }
+  const sourceLabel = cleanText(options.sourceLabel, '来源文件名', 260);
+  if (!sourceLabel) throw new Error('来源文件名不能为空。');
+  if (
+    typeof options.contentHash !== 'string' ||
+    !/^[a-f0-9]{64}$/i.test(options.contentHash)
+  ) {
+    throw new Error('导入文件指纹无效，请重新选择文件。');
+  }
+  if (
+    !Array.isArray(payload.items) ||
+    payload.items.length < 1 ||
+    payload.items.length > 300
+  ) {
+    throw new Error('请提供 1 至 300 项已校对的导入内容。');
+  }
+  const items = payload.items.map((rawItem) => {
+    const item = record(rawItem, '导入项目');
+    if (
+      typeof item.sourceId !== 'string' ||
+      !item.sourceId.trim() ||
+      item.sourceId.length > 500
+    ) {
+      throw new Error('来源记录标识无效。');
+    }
+    if (item.kind === 'course') {
+      const input = parseCourseInput(item.input);
+      if (input.semesterId !== options.semesterId)
+        throw new Error('导入课程的目标学期不一致。');
+      if (!Array.isArray(item.exceptions) || item.exceptions.length > 100) {
+        throw new Error('课程单次调课列表无效。');
+      }
+      const exceptions: ImportExceptionDraft[] = item.exceptions.map(
+        (rawException) => {
+          const exception = parseCourseExceptionInput({
+            ...record(rawException, '单次课程调整'),
+            courseId: '00000000-0000-4000-8000-000000000000',
+          });
+          return {
+            originalDate: exception.originalDate,
+            isCancelled: exception.isCancelled,
+            replacementDate: exception.replacementDate,
+            startTime: exception.startTime,
+            endTime: exception.endTime,
+            classroom: exception.classroom,
+          };
+        },
+      );
+      return {
+        kind: 'course' as const,
+        sourceId: item.sourceId.trim(),
+        input,
+        exceptions,
+      };
+    }
+    if (item.kind === 'event') {
+      return {
+        kind: 'event' as const,
+        sourceId: item.sourceId.trim(),
+        input: parseEventInput(item.input),
+      };
+    }
+    throw new Error('导入项目类型无效。');
+  });
+  return {
+    options: {
+      semesterId: options.semesterId,
+      sourceType: options.sourceType as ImportSourceType,
+      sourceLabel,
+      contentHash: options.contentHash.toLocaleLowerCase(),
+    },
+    items,
+  };
+}
+
+export function parseImportBatchDecisions(
+  value: unknown,
+  itemCount: number,
+  duplicateIndexes: Set<number>,
+): ImportBatchDecision[] {
+  if (!Array.isArray(value) || value.length > itemCount) {
+    throw new Error('导入重复项处理列表无效。');
+  }
+  const seen = new Set<number>();
+  return value.map((raw) => {
+    const item = record(raw, '导入重复项处理');
+    if (
+      !Number.isInteger(item.itemIndex) ||
+      (item.itemIndex as number) < 0 ||
+      (item.itemIndex as number) >= itemCount ||
+      !duplicateIndexes.has(item.itemIndex as number) ||
+      seen.has(item.itemIndex as number)
+    ) {
+      throw new Error('导入重复项编号无效，请重新检查。');
+    }
+    if (item.action !== 'skip' && item.action !== 'keep') {
+      throw new Error('请选择跳过或保留重复内容。');
+    }
+    seen.add(item.itemIndex as number);
+    return { itemIndex: item.itemIndex as number, action: item.action };
   });
 }
 

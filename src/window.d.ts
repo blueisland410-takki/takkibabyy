@@ -5,6 +5,12 @@ import type {
   CourseImportDecision,
   CourseImportResult,
   CourseInput,
+  ImportBatchAnalysis,
+  ImportBatchDecision,
+  ImportBatchPayload,
+  ImportBatchResult,
+  ImportBatchSummary,
+  ImportBatchUndoResult,
   ClassPeriodTime,
   DayData,
   Event,
@@ -52,6 +58,15 @@ declare global {
         courses: CourseInput[],
         decisions: CourseImportDecision[],
       ) => Promise<CourseImportResult>;
+      analyzeImportBatch: (
+        payload: ImportBatchPayload,
+      ) => Promise<ImportBatchAnalysis>;
+      importBatch: (
+        payload: ImportBatchPayload,
+        decisions: ImportBatchDecision[],
+      ) => Promise<ImportBatchResult>;
+      listImportBatches: (semesterId: string) => Promise<ImportBatchSummary[]>;
+      undoImportBatch: (batchId: string) => Promise<ImportBatchUndoResult>;
       getClassPeriodTimes: () => Promise<ClassPeriodTime[]>;
       saveClassPeriodTimes: (
         periods: ClassPeriodTime[],

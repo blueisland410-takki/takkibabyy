@@ -128,6 +128,123 @@ export type CourseImportResult = {
   skippedCount: number;
 };
 
+export type ImportSourceType = 'IMAGE' | 'ICS' | 'XLSX' | 'CSV';
+
+export type NormalizedImportDraft = {
+  id: string;
+  kind: 'course' | 'event';
+  semesterId: string;
+  courseName: string;
+  weekday: number | null;
+  startTime: string | null;
+  endTime: string | null;
+  classroom: string;
+  teacher: string;
+  firstWeek: number | null;
+  lastWeek: number | null;
+  recurrenceType: RecurrenceType | null;
+  customWeeks: number[];
+  exceptions: Array<{
+    originalDate: string;
+    isCancelled: boolean;
+    replacementDate: string;
+    startTime: string;
+    endTime: string;
+    classroom: string;
+  }>;
+  eventDate: string | null;
+  isAllDay: boolean;
+  notes: string;
+  sourceType: ImportSourceType;
+  sourceId: string;
+  sourceLabel: string;
+  rawText: string;
+  warnings: string[];
+  confidence: number | null;
+  included: boolean;
+  reviewed: boolean;
+};
+
+export type ImportBatchOptions = {
+  semesterId: string;
+  sourceType: ImportSourceType;
+  sourceLabel: string;
+  contentHash: string;
+};
+
+export type ImportExceptionDraft = {
+  originalDate: string;
+  isCancelled: boolean;
+  replacementDate: string;
+  startTime: string;
+  endTime: string;
+  classroom: string;
+};
+
+export type ImportBatchCourseItem = {
+  kind: 'course';
+  sourceId: string;
+  input: CourseInput;
+  exceptions: ImportExceptionDraft[];
+};
+
+export type ImportBatchEventItem = {
+  kind: 'event';
+  sourceId: string;
+  input: EventInput;
+};
+
+export type ImportBatchItem = ImportBatchCourseItem | ImportBatchEventItem;
+
+export type ImportBatchPayload = {
+  options: ImportBatchOptions;
+  items: ImportBatchItem[];
+};
+
+export type ImportBatchDuplicate = {
+  itemIndex: number;
+  reason: 'same-source' | 'same-course';
+  title: string;
+};
+
+export type ImportBatchConflict = CourseImportConflict & {
+  firstItemIndex: number;
+  secondItemIndex: number;
+};
+
+export type ImportBatchAnalysis = {
+  duplicates: ImportBatchDuplicate[];
+  conflicts: ImportBatchConflict[];
+};
+
+export type ImportBatchDecision = {
+  itemIndex: number;
+  action: 'skip' | 'keep';
+};
+
+export type ImportBatchResult = CourseImportResult & {
+  batchId: string;
+  importedEventCount: number;
+};
+
+export type ImportBatchUndoResult = {
+  removedCourseCount: number;
+  removedEventCount: number;
+  retainedItemCount: number;
+};
+
+export type ImportBatchSummary = {
+  id: string;
+  semesterId: string;
+  sourceType: ImportSourceType;
+  sourceLabel: string;
+  contentHash: string;
+  createdAt: string;
+  undoneAt: string | null;
+  importedCourseCount: number;
+  importedEventCount: number;
+};
+
 export type CourseOccurrence = Course & {
   originalDate: string;
   occurrenceDate: string;

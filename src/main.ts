@@ -19,6 +19,8 @@ import {
   parseCourseExceptionInput,
   parseCourseImportDecisions,
   parseCourseImportInputs,
+  parseImportBatchPayload,
+  parseImportBatchDecisions,
   parseCourseInput,
   parseClassPeriodTimes,
   parseEventInput,
@@ -442,6 +444,39 @@ const registerWindowControls = () => {
       return database.importCourses(semesterId, courses, decisions);
     },
   );
+  ipcMain.handle('import:analyze-batch', (event, rawPayload: unknown) => {
+    getTrustedWindow(event);
+    const payload = parseImportBatchPayload(rawPayload);
+    return getPlannerDatabase().analyzeImportBatch(payload);
+  });
+  ipcMain.handle(
+    'import:commit-batch',
+    (event, rawPayload: unknown, rawDecisions: unknown) => {
+      getTrustedWindow(event);
+      const payload = parseImportBatchPayload(rawPayload);
+      const database = getPlannerDatabase();
+      const currentAnalysis = database.analyzeImportBatch(payload);
+      const duplicateIndexes = new Set(
+        currentAnalysis.duplicates.map((duplicate) => duplicate.itemIndex),
+      );
+      const decisions = parseImportBatchDecisions(
+        rawDecisions,
+        payload.items.length,
+        duplicateIndexes,
+      );
+      return database.importBatch(payload, decisions);
+    },
+  );
+  ipcMain.handle('import:undo-batch', (event, batchId: unknown) => {
+    getTrustedWindow(event);
+    assertId(batchId);
+    return getPlannerDatabase().undoImportBatch(batchId);
+  });
+  ipcMain.handle('import:list-batches', (event, semesterId: unknown) => {
+    getTrustedWindow(event);
+    assertId(semesterId);
+    return getPlannerDatabase().listImportBatches(semesterId);
+  });
   ipcMain.handle('class-periods:list', (event) => {
     getTrustedWindow(event);
     return getPlannerDatabase().getClassPeriodTimes();

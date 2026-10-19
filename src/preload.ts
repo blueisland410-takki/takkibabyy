@@ -7,6 +7,12 @@ import type {
   CourseImportDecision,
   CourseImportResult,
   CourseInput,
+  ImportBatchAnalysis,
+  ImportBatchDecision,
+  ImportBatchPayload,
+  ImportBatchResult,
+  ImportBatchSummary,
+  ImportBatchUndoResult,
   DayData,
   Event,
   EventInput,
@@ -26,6 +32,8 @@ import {
   parseEventUpdate,
   parseCourseExceptionInput,
   parseCourseImportInputs,
+  parseImportBatchPayload,
+  parseImportBatchDecisions,
   parseCourseInput,
   parseClassPeriodTimes,
   parseMoveDirection,
@@ -115,6 +123,42 @@ contextBridge.exposeInMainWorld('dayByDay', {
       parseCourseImportInputs(semesterId, courses),
       decisions,
     );
+  },
+  analyzeImportBatch: (
+    payload: ImportBatchPayload,
+  ): Promise<ImportBatchAnalysis> => {
+    const safePayload = parseImportBatchPayload(payload);
+    return ipcRenderer.invoke('import:analyze-batch', safePayload);
+  },
+  importBatch: (
+    payload: ImportBatchPayload,
+    decisions: ImportBatchDecision[],
+  ): Promise<ImportBatchResult> => {
+    const safePayload = parseImportBatchPayload(payload);
+    if (!Array.isArray(decisions)) throw new Error('重复项处理列表无效。');
+    // Main-process analysis remains authoritative; this validates the decision
+    // shape, while IPC checks each index against current duplicate results.
+    const duplicateIndices = new Set(
+      safePayload.items.map((_, index) => index),
+    );
+    const safeDecisions = parseImportBatchDecisions(
+      decisions,
+      safePayload.items.length,
+      duplicateIndices,
+    );
+    return ipcRenderer.invoke(
+      'import:commit-batch',
+      safePayload,
+      safeDecisions,
+    );
+  },
+  listImportBatches: (semesterId: string): Promise<ImportBatchSummary[]> => {
+    assertId(semesterId);
+    return ipcRenderer.invoke('import:list-batches', semesterId);
+  },
+  undoImportBatch: (batchId: string): Promise<ImportBatchUndoResult> => {
+    assertId(batchId);
+    return ipcRenderer.invoke('import:undo-batch', batchId);
   },
   getClassPeriodTimes: (): Promise<ClassPeriodTime[]> =>
     ipcRenderer.invoke('class-periods:list'),
