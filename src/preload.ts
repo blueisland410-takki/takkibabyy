@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Course,
   CourseExceptionInput,
+  ClassPeriodTime,
+  CourseImportAnalysis,
+  CourseImportDecision,
+  CourseImportResult,
   CourseInput,
   DayData,
   Event,
@@ -21,7 +25,9 @@ import {
   parseEventInput,
   parseEventUpdate,
   parseCourseExceptionInput,
+  parseCourseImportInputs,
   parseCourseInput,
+  parseClassPeriodTimes,
   parseMoveDirection,
   parseSeriesExceptionPolicy,
   parseSemesterInput,
@@ -36,6 +42,10 @@ contextBridge.exposeInMainWorld('dayByDay', {
     ipcRenderer.invoke('window:toggle-always-on-top'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  setImportWindowMode: (enabled: boolean): Promise<void> => {
+    if (typeof enabled !== 'boolean') throw new Error('导入页面窗口选项无效。');
+    return ipcRenderer.invoke('window:set-import-mode', enabled);
+  },
   getDay: (date: string): Promise<DayData> => {
     assertDateKey(date);
     return ipcRenderer.invoke('planner:get-day', date);
@@ -81,6 +91,37 @@ contextBridge.exposeInMainWorld('dayByDay', {
     assertId(semesterId);
     return ipcRenderer.invoke('course:list', semesterId);
   },
+  analyzeCourseImport: (
+    semesterId: string,
+    courses: CourseInput[],
+  ): Promise<CourseImportAnalysis> => {
+    assertId(semesterId);
+    return ipcRenderer.invoke(
+      'course:analyze-import',
+      semesterId,
+      parseCourseImportInputs(semesterId, courses),
+    );
+  },
+  importCourses: (
+    semesterId: string,
+    courses: CourseInput[],
+    decisions: CourseImportDecision[],
+  ): Promise<CourseImportResult> => {
+    assertId(semesterId);
+    if (!Array.isArray(decisions)) throw new Error('重复课程处理列表无效。');
+    return ipcRenderer.invoke(
+      'course:import-batch',
+      semesterId,
+      parseCourseImportInputs(semesterId, courses),
+      decisions,
+    );
+  },
+  getClassPeriodTimes: (): Promise<ClassPeriodTime[]> =>
+    ipcRenderer.invoke('class-periods:list'),
+  saveClassPeriodTimes: (
+    periods: ClassPeriodTime[],
+  ): Promise<ClassPeriodTime[]> =>
+    ipcRenderer.invoke('class-periods:save', parseClassPeriodTimes(periods)),
   createCourse: (input: CourseInput): Promise<Course> =>
     ipcRenderer.invoke('course:create', parseCourseInput(input)),
   updateCourseSeries: (

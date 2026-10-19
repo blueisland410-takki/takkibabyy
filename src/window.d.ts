@@ -1,7 +1,11 @@
 import type {
   Course,
   CourseExceptionInput,
+  CourseImportAnalysis,
+  CourseImportDecision,
+  CourseImportResult,
   CourseInput,
+  ClassPeriodTime,
   DayData,
   Event,
   EventInput,
@@ -24,6 +28,7 @@ declare global {
       toggleAlwaysOnTop: () => Promise<boolean>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      setImportWindowMode: (enabled: boolean) => Promise<void>;
       getDay: (date: string) => Promise<DayData>;
       createTask: (input: TaskInput) => Promise<Task>;
       updateTask: (input: TaskUpdate) => Promise<Task>;
@@ -38,6 +43,19 @@ declare global {
       updateSemester: (id: string, input: SemesterInput) => Promise<Semester>;
       setCurrentSemester: (id: string) => Promise<Semester>;
       listCourses: (semesterId: string) => Promise<Course[]>;
+      analyzeCourseImport: (
+        semesterId: string,
+        courses: CourseInput[],
+      ) => Promise<CourseImportAnalysis>;
+      importCourses: (
+        semesterId: string,
+        courses: CourseInput[],
+        decisions: CourseImportDecision[],
+      ) => Promise<CourseImportResult>;
+      getClassPeriodTimes: () => Promise<ClassPeriodTime[]>;
+      saveClassPeriodTimes: (
+        periods: ClassPeriodTime[],
+      ) => Promise<ClassPeriodTime[]>;
       createCourse: (input: CourseInput) => Promise<Course>;
       updateCourseSeries: (
         id: string,

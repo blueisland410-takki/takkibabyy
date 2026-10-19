@@ -1,0 +1,9 @@
+DayByDay bundles the following local OCR components:
+
+- Tesseract.js 7.0.0 and tesseract.js-core 7.0.0
+  Apache License 2.0. License copies are in this directory.
+- @tesseract.js-data/chi_sim 1.0.0 and @tesseract.js-data/eng 1.0.0
+  Distributed under the MIT license by their package metadata.
+  Project: https://github.com/naptha/tessdata
+
+OCR assets are included for offline recognition. No image is uploaded.

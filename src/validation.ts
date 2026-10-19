@@ -1,4 +1,5 @@
 import type {
+  ClassPeriodTime,
   CourseExceptionInput,
   CourseInput,
   RecurrenceType,
@@ -223,6 +224,85 @@ export function parseCourseInput(value: unknown): CourseInput {
     recurrenceType,
     customWeeks: recurrenceType === 'CUSTOM' ? (customWeeks as number[]) : [],
   };
+}
+
+export function parseCourseImportInputs(
+  semesterIdValue: unknown,
+  value: unknown,
+): CourseInput[] {
+  assertId(semesterIdValue);
+  if (!Array.isArray(value) || value.length < 1 || value.length > 300) {
+    throw new Error('请提供 1 至 300 门已校对的课程。');
+  }
+  return value.map((item) => {
+    const course = parseCourseInput(item);
+    if (course.semesterId !== semesterIdValue) {
+      throw new Error('导入课程的目标学期不一致，请重新检查。');
+    }
+    return course;
+  });
+}
+
+export function parseCourseImportDecisions(
+  value: unknown,
+  courseCount: number,
+  duplicateIndexes: Set<number>,
+): Array<{ courseIndex: number; action: 'skip' | 'keep' }> {
+  if (!Array.isArray(value) || value.length > courseCount) {
+    throw new Error('重复课程处理列表无效。');
+  }
+  const seen = new Set<number>();
+  return value.map((raw) => {
+    const item = record(raw, '重复课程处理');
+    const courseIndex = item.courseIndex;
+    if (
+      !Number.isInteger(courseIndex) ||
+      (courseIndex as number) < 0 ||
+      (courseIndex as number) >= courseCount ||
+      !duplicateIndexes.has(courseIndex as number) ||
+      seen.has(courseIndex as number)
+    ) {
+      throw new Error('重复课程处理编号无效，请重新检查。');
+    }
+    if (item.action !== 'skip' && item.action !== 'keep') {
+      throw new Error('请选择跳过或保留重复课程。');
+    }
+    seen.add(courseIndex as number);
+    return { courseIndex: courseIndex as number, action: item.action };
+  });
+}
+
+export function parseClassPeriodTimes(value: unknown): ClassPeriodTime[] {
+  if (!Array.isArray(value) || value.length > 24) {
+    throw new Error('节次模板最多支持 24 节。');
+  }
+  const periods = value
+    .map((raw) => {
+      const item = record(raw, '节次时间');
+      if (
+        !Number.isInteger(item.periodNumber) ||
+        (item.periodNumber as number) < 1 ||
+        (item.periodNumber as number) > 24
+      ) {
+        throw new Error('节次编号必须为 1 至 24。');
+      }
+      const startTime = cleanTime(item.startTime, '开始时间');
+      const endTime = cleanTime(item.endTime, '结束时间');
+      if (!startTime || !endTime || endTime <= startTime) {
+        throw new Error('每节课都需要有效时间，且结束时间晚于开始时间。');
+      }
+      return { periodNumber: item.periodNumber as number, startTime, endTime };
+    })
+    .sort((a, b) => a.periodNumber - b.periodNumber);
+  if (periods.some((period, index) => period.periodNumber !== index + 1)) {
+    throw new Error('节次必须从第 1 节连续设置，不能跳过中间节次。');
+  }
+  for (let index = 1; index < periods.length; index += 1) {
+    if (periods[index].startTime < periods[index - 1].endTime) {
+      throw new Error('节次时间不能重叠或倒序。');
+    }
+  }
+  return periods;
 }
 
 export function parseCourseExceptionInput(

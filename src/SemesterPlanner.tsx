@@ -7,6 +7,7 @@ import type {
   SemesterInput,
   SeriesExceptionPolicy,
 } from './domain';
+import { TimetableImport } from './TimetableImport';
 
 const localDateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -456,6 +457,7 @@ export function SemesterPlanner({
     null,
   );
   const [courseEditor, setCourseEditor] = useState<Course | 'new' | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [editorError, setEditorError] = useState('');
   const selectedSemester =
     semesters.find((semester) => semester.id === semesterId) ?? null;
@@ -604,6 +606,23 @@ export function SemesterPlanner({
     }
   };
 
+  if (importOpen && selectedSemester) {
+    return (
+      <TimetableImport
+        existingCourses={courses}
+        onClose={() => setImportOpen(false)}
+        onImported={() => {
+          void window.dayByDay
+            .listCourses(selectedSemester.id)
+            .then(setCourses)
+            .catch((failure: unknown) => setError(errorText(failure)));
+          onCurrentSemesterChanged();
+        }}
+        semester={selectedSemester}
+      />
+    );
+  }
+
   return (
     <section aria-label="学期课程管理" className="planner-page">
       <div className="planner-page-heading">
@@ -696,13 +715,22 @@ export function SemesterPlanner({
           </div>
           <div className="course-list-heading">
             <h2>我的课程</h2>
-            <button
-              className="text-action"
-              onClick={() => onOpenDay(localDateKey(new Date()))}
-              type="button"
-            >
-              查看今日安排
-            </button>
+            <div className="course-list-tools">
+              <button
+                className="text-action"
+                onClick={() => setImportOpen(true)}
+                type="button"
+              >
+                Import timetable
+              </button>
+              <button
+                className="text-action"
+                onClick={() => onOpenDay(localDateKey(new Date()))}
+                type="button"
+              >
+                查看今日安排
+              </button>
+            </div>
           </div>
           {courses.length === 0 ? (
             <div className="empty-state planner-card">

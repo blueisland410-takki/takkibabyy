@@ -10,6 +10,7 @@ lerna-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
+/*.traineddata
 pids
 *.pid
 *.seed
@@ -146,3 +147,5 @@ vite.config.ts.timestamp-*
 out/
 .test-output/
 .electron-cache/
+.electron-zip/
+.package-temp/

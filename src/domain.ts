@@ -92,6 +92,42 @@ export type Course = {
 
 export type CourseInput = Omit<Course, 'id' | 'createdAt' | 'updatedAt'>;
 
+export type ClassPeriodTime = {
+  periodNumber: number;
+  startTime: string;
+  endTime: string;
+};
+
+export type CourseImportDecision = {
+  courseIndex: number;
+  action: 'skip' | 'keep';
+};
+
+export type CourseImportDuplicate = {
+  courseIndex: number;
+  existingCourseId?: string;
+  earlierCourseIndex?: number;
+  courseName: string;
+};
+
+export type CourseImportConflict = {
+  firstCourseIndex: number;
+  secondCourseIndex: number;
+  weekday: number;
+  firstCourseName: string;
+  secondCourseName: string;
+};
+
+export type CourseImportAnalysis = {
+  duplicates: CourseImportDuplicate[];
+  conflicts: CourseImportConflict[];
+};
+
+export type CourseImportResult = {
+  importedCount: number;
+  skippedCount: number;
+};
+
 export type CourseOccurrence = Course & {
   originalDate: string;
   occurrenceDate: string;

@@ -1,8 +1,13 @@
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
+import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import type {
+  ClassPeriodTime,
   Course,
   CourseExceptionInput,
+  CourseImportAnalysis,
+  CourseImportDecision,
+  CourseImportResult,
   CourseInput,
   CourseOccurrence,
   Event,
@@ -20,9 +25,12 @@ import {
   getTeachingWeekNumber,
   shiftDateKey,
 } from './courseSchedule';
+import { analyzeCourseImport as analyzeCourseImportRows } from './courseImport';
 import { assertDateKey } from './validation';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+
+export type SqliteDatabaseConstructor = typeof Database;
 
 type TaskRow = {
   id: string;
@@ -85,6 +93,12 @@ type CourseExceptionRow = {
   start_time: string;
   end_time: string;
   classroom: string;
+};
+
+type ClassPeriodTimeRow = {
+  period_number: number;
+  start_time: string;
+  end_time: string;
 };
 
 function taskFromRow(row: TaskRow): Task {
@@ -154,8 +168,16 @@ function courseFromRow(row: CourseRow, customWeeks: number[]): Course {
 export class PlannerDatabase {
   private readonly database: Database.Database;
 
-  constructor(filePath: string) {
-    const database = new Database(filePath);
+  constructor(
+    filePath: string,
+    databaseConstructor?: SqliteDatabaseConstructor,
+  ) {
+    const SqliteDatabase =
+      databaseConstructor ??
+      (createRequire(__filename)(
+        'better-sqlite3',
+      ) as SqliteDatabaseConstructor);
+    const database = new SqliteDatabase(filePath);
     try {
       database.pragma('foreign_keys = ON');
       database.pragma('busy_timeout = 5000');
@@ -301,6 +323,107 @@ export class PlannerDatabase {
       )
       .all(semesterId) as CourseRow[];
     return rows.map((row) => courseFromRow(row, this.getCustomWeeks(row.id)));
+  }
+
+  getClassPeriodTimes(): ClassPeriodTime[] {
+    const rows = this.database
+      .prepare('SELECT * FROM class_period_times ORDER BY period_number')
+      .all() as ClassPeriodTimeRow[];
+    return rows.map((row) => ({
+      periodNumber: row.period_number,
+      startTime: row.start_time,
+      endTime: row.end_time,
+    }));
+  }
+
+  saveClassPeriodTimes(periods: ClassPeriodTime[]): ClassPeriodTime[] {
+    this.database
+      .transaction(() => {
+        this.database.prepare('DELETE FROM class_period_times').run();
+        const insert = this.database.prepare(
+          'INSERT INTO class_period_times (period_number, start_time, end_time) VALUES (?, ?, ?)',
+        );
+        for (const period of periods) {
+          insert.run(period.periodNumber, period.startTime, period.endTime);
+        }
+      })
+      .immediate();
+    return this.getClassPeriodTimes();
+  }
+
+  analyzeCourseImport(
+    semesterId: string,
+    incoming: CourseInput[],
+  ): CourseImportAnalysis {
+    const semester = this.findSemester(semesterId);
+    if (!semester) throw new Error('导入目标学期已不存在，请重新选择。');
+    for (const course of incoming) {
+      if (course.semesterId !== semesterId) {
+        throw new Error('导入课程的目标学期不一致，请重新检查。');
+      }
+      this.assertCourseWeeksFitSemester(course, semester);
+    }
+    return analyzeCourseImportRows(this.listCourses(semesterId), incoming);
+  }
+
+  importCourses(
+    semesterId: string,
+    incoming: CourseInput[],
+    decisions: CourseImportDecision[],
+  ): CourseImportResult {
+    const analysis = this.analyzeCourseImport(semesterId, incoming);
+    const decisionByIndex = new Map(
+      decisions.map((decision) => [decision.courseIndex, decision.action]),
+    );
+    const duplicateIndexes = new Set(
+      analysis.duplicates.map((duplicate) => duplicate.courseIndex),
+    );
+    if (
+      decisions.some((decision) => !duplicateIndexes.has(decision.courseIndex))
+    ) {
+      throw new Error('重复课程处理结果已过期，请重新检查后导入。');
+    }
+
+    let importedCount = 0;
+    let skippedCount = 0;
+    const now = timestamp();
+    this.database
+      .transaction(() => {
+        for (let index = 0; index < incoming.length; index += 1) {
+          const action = decisionByIndex.get(index);
+          if (duplicateIndexes.has(index) && action !== 'keep') {
+            skippedCount += 1;
+            continue;
+          }
+          const input = incoming[index];
+          const id = randomUUID();
+          this.database
+            .prepare(
+              `INSERT INTO courses (id, semester_id, course_name, weekday, start_time, end_time, classroom, teacher, notes, first_week, last_week, recurrence_type, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              id,
+              input.semesterId,
+              input.courseName,
+              input.weekday,
+              input.startTime,
+              input.endTime,
+              input.classroom,
+              input.teacher,
+              input.notes,
+              input.firstWeek,
+              input.lastWeek,
+              input.recurrenceType,
+              now,
+              now,
+            );
+          this.replaceCustomWeeks(id, input.customWeeks);
+          importedCount += 1;
+        }
+      })
+      .immediate();
+    return { importedCount, skippedCount };
   }
 
   createCourse(input: CourseInput): Course {
@@ -750,6 +873,21 @@ export class PlannerDatabase {
         })
         .immediate();
       version = 2;
+    }
+    if (version === 2) {
+      this.database
+        .transaction(() => {
+          this.database.exec(`
+            CREATE TABLE class_period_times (
+              period_number INTEGER PRIMARY KEY NOT NULL CHECK (period_number BETWEEN 1 AND 24),
+              start_time TEXT NOT NULL,
+              end_time TEXT NOT NULL
+            );
+          `);
+          this.database.pragma('user_version = 3');
+        })
+        .immediate();
+      version = 3;
     }
     if (version !== SCHEMA_VERSION)
       throw new Error(`不支持的数据库版本 ${version}，数据未被修改。`);

@@ -2,20 +2,25 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  protocol,
   screen,
   type BrowserWindowConstructorOptions,
   type IpcMainInvokeEvent,
   type Rectangle,
 } from 'electron';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { PlannerDatabase } from './database';
-import type { MoveDirection } from './domain';
+import { PlannerDatabase, type SqliteDatabaseConstructor } from './database';
+import type { CourseImportDecision, MoveDirection } from './domain';
 import {
   assertDateKey,
   assertId,
   parseCourseExceptionInput,
+  parseCourseImportDecisions,
+  parseCourseImportInputs,
   parseCourseInput,
+  parseClassPeriodTimes,
   parseEventInput,
   parseEventUpdate,
   parseMoveDirection,
@@ -31,6 +36,19 @@ const DEFAULT_HEIGHT = 620;
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 420;
 const STATE_FILE = 'window-state.json';
+const OCR_CORE_FILE = 'tesseract-core-lstm.wasm.js';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'daybyday-ocr',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 type SavedWindowState = {
   x?: number;
@@ -43,6 +61,7 @@ type SavedWindowState = {
 let mainWindow: BrowserWindow | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let plannerDatabase: PlannerDatabase | undefined;
+let boundsBeforeImportMode: Rectangle | undefined;
 
 if (started) {
   app.quit();
@@ -58,8 +77,20 @@ const getPlannerDatabase = () => {
   try {
     const userDataPath = app.getPath('userData');
     fs.mkdirSync(userDataPath, { recursive: true });
+    const sqliteRequire = createRequire(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'daybyday-loader.cjs')
+        : __filename,
+    );
+    const sqlitePackagePath = app.isPackaged
+      ? path.join(process.resourcesPath, 'better-sqlite3')
+      : 'better-sqlite3';
+    const sqliteDatabaseConstructor = sqliteRequire(
+      sqlitePackagePath,
+    ) as SqliteDatabaseConstructor;
     plannerDatabase = new PlannerDatabase(
       path.join(userDataPath, 'daybyday.sqlite'),
+      sqliteDatabaseConstructor,
     );
     return plannerDatabase;
   } catch (error) {
@@ -187,6 +218,63 @@ const keepWindowVisible = () => {
   saveWindowState();
 };
 
+const registerOcrProtocol = () => {
+  protocol.handle('daybyday-ocr', async (request) => {
+    const url = new URL(request.url);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+        },
+      });
+    }
+    if (request.method !== 'GET')
+      return new Response('Not found', { status: 404 });
+
+    let assetPath: string | undefined;
+    const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    const ocrResourceRoot = app.isPackaged
+      ? path.join(process.resourcesPath, 'ocr')
+      : path.join(app.getAppPath(), 'resources', 'ocr');
+    if (url.hostname === 'worker' && relativePath === 'worker.min.js') {
+      assetPath = path.join(ocrResourceRoot, 'runtime', 'worker.min.js');
+    } else if (url.hostname === 'core' && relativePath === OCR_CORE_FILE) {
+      assetPath = path.join(ocrResourceRoot, 'runtime', OCR_CORE_FILE);
+    } else if (
+      url.hostname === 'lang' &&
+      (relativePath === 'chi_sim.traineddata.gz' ||
+        relativePath === 'eng.traineddata.gz')
+    ) {
+      assetPath = path.join(ocrResourceRoot, 'lang', relativePath);
+    }
+    if (!assetPath) return new Response('Not found', { status: 404 });
+
+    try {
+      const content = fs.readFileSync(assetPath);
+      const contentType = assetPath.endsWith('.wasm')
+        ? 'application/wasm'
+        : assetPath.endsWith('.js')
+          ? 'text/javascript; charset=utf-8'
+          : 'application/gzip';
+      return new Response(content, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          'Content-Type': contentType,
+        },
+      });
+    } catch {
+      return new Response('Local OCR resource is missing.', {
+        status: 404,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+  });
+};
+
 const getTrustedWindow = (event: IpcMainInvokeEvent) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   if (
@@ -216,6 +304,25 @@ const registerWindowControls = () => {
   });
   ipcMain.handle('window:close', (event) => {
     getTrustedWindow(event).close();
+  });
+  ipcMain.handle('window:set-import-mode', (event, enabled: unknown) => {
+    const window = getTrustedWindow(event);
+    if (typeof enabled !== 'boolean') throw new Error('导入页面窗口选项无效。');
+    if (enabled && !boundsBeforeImportMode) {
+      boundsBeforeImportMode = window.getBounds();
+      const { workArea } = screen.getDisplayMatching(boundsBeforeImportMode);
+      window.setBounds(
+        clampToVisibleDisplay({
+          ...boundsBeforeImportMode,
+          width: Math.min(1020, workArea.width),
+          height: Math.min(820, workArea.height),
+        }),
+        true,
+      );
+    } else if (!enabled && boundsBeforeImportMode) {
+      window.setBounds(clampToVisibleDisplay(boundsBeforeImportMode), true);
+      boundsBeforeImportMode = undefined;
+    }
   });
 
   ipcMain.handle('planner:get-day', (event, date: unknown) => {
@@ -303,6 +410,49 @@ const registerWindowControls = () => {
     return getPlannerDatabase().createCourse(parseCourseInput(input));
   });
   ipcMain.handle(
+    'course:analyze-import',
+    (event, semesterId: unknown, rawCourses: unknown) => {
+      getTrustedWindow(event);
+      assertId(semesterId);
+      const courses = parseCourseImportInputs(semesterId, rawCourses);
+      return getPlannerDatabase().analyzeCourseImport(semesterId, courses);
+    },
+  );
+  ipcMain.handle(
+    'course:import-batch',
+    (
+      event,
+      semesterId: unknown,
+      rawCourses: unknown,
+      rawDecisions: unknown,
+    ) => {
+      getTrustedWindow(event);
+      assertId(semesterId);
+      const courses = parseCourseImportInputs(semesterId, rawCourses);
+      const database = getPlannerDatabase();
+      const currentAnalysis = database.analyzeCourseImport(semesterId, courses);
+      const duplicateIndexes = new Set(
+        currentAnalysis.duplicates.map((duplicate) => duplicate.courseIndex),
+      );
+      const decisions: CourseImportDecision[] = parseCourseImportDecisions(
+        rawDecisions,
+        courses.length,
+        duplicateIndexes,
+      );
+      return database.importCourses(semesterId, courses, decisions);
+    },
+  );
+  ipcMain.handle('class-periods:list', (event) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().getClassPeriodTimes();
+  });
+  ipcMain.handle('class-periods:save', (event, periods: unknown) => {
+    getTrustedWindow(event);
+    return getPlannerDatabase().saveClassPeriodTimes(
+      parseClassPeriodTimes(periods),
+    );
+  });
+  ipcMain.handle(
     'course:update-series',
     (event, id: unknown, input: unknown, exceptionPolicy: unknown) => {
       getTrustedWindow(event);
@@ -377,6 +527,7 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  registerOcrProtocol();
   registerWindowControls();
   createWindow();
 

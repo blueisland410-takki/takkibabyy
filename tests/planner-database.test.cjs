@@ -243,7 +243,7 @@ test('version 1 database migrates to semester planner without changing tasks and
   assert.equal(database.listTasks('2026-08-31')[0].title, '原有待办');
   assert.equal(database.listEvents('2026-08-31')[0].title, '原有日程');
   const reopened = new BetterSqlite3(filePath);
-  assert.equal(reopened.pragma('user_version', { simple: true }), 2);
+  assert.equal(reopened.pragma('user_version', { simple: true }), 3);
   reopened.close();
   assert.equal(database.listSemesters().length, 0);
 });

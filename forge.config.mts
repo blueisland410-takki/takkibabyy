@@ -7,10 +7,24 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import AutoUnpackNativesPlugin from '@electron-forge/plugin-auto-unpack-natives';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import path from 'node:path';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // The Vite plugin bundles dependencies by default. Ship the native SQLite
+    // package beside the OCR resources and load it from this fixed path.
+    extraResource: [
+      path.resolve('resources/ocr'),
+      path.resolve('resources/better-sqlite3'),
+    ],
+    download: { cacheRoot: path.resolve('.electron-cache') },
+    tmpdir: path.resolve('.package-temp'),
+    ...(process.env.DAYBYDAY_ELECTRON_ZIP_DIR
+      ? {
+          electronZipDir: path.resolve(process.env.DAYBYDAY_ELECTRON_ZIP_DIR),
+        }
+      : {}),
   },
   // better-sqlite3 ships platform-specific N-API binaries. N-API is ABI-stable,
   // so rebuilding this module for Electron would require a local C++ toolchain
