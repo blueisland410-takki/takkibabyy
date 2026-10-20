@@ -11,6 +11,9 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import path from 'node:path';
 
 const config: ForgeConfig = {
+  // Keep release builds isolated when the regular `out` directory is locked.
+  // Set DAYBYDAY_OUT_DIR for one build; default output remains unchanged.
+  outDir: process.env.DAYBYDAY_OUT_DIR || 'out',
   packagerConfig: {
     // Keep package.json's productName unchanged so Electron continues to use
     // the existing %APPDATA%\DayByDay user-data location.

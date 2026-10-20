@@ -129,7 +129,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-w
 
 ### Window Mode：桌面便签（Phase 6.1C，Windows 实验功能）
 
-在 **Settings → Window Mode** 可切换 **Floating Window**、**Desktop Widget** 和 **Always on Top**。三种模式有独立保存值；旧版只保存“始终置顶”的 `window-state.json` 会自动迁移到 Floating Window 或 Always on Top。顶部图钉按钮可设为 Always on Top，再次点击会回到 Floating Window。Desktop Widget 在 Windows 上将当前 BrowserWindow 通过随应用打包的 `resources/daybyday-desktop-window.ps1` 挂接到 Explorer 的 `Progman` 桌面层；它不是 `setAlwaysOnTop(false)`。辅助进程每约 1.8 秒检查桌面宿主，Explorer 重启后会尝试重新挂接；如果宿主连续 20 秒不可用，应用会退回 Floating Window。初次挂接失败也会切回 Floating Window 并显示提示。Desktop Widget 模式下，最小化按钮会隐藏组件，托盘图标可恢复；关闭按钮仍按“关闭到托盘”设置决定隐藏或退出。
+在 **Settings → Window Mode** 可切换 **Floating Window**、**Desktop Widget** 和 **Always on Top**。三种模式有独立保存值；旧版只保存“始终置顶”的 `window-state.json` 会自动迁移到 Floating Window 或 Always on Top。顶部图钉按钮可设为 Always on Top，再次点击会回到 Floating Window。Desktop Widget 在 Windows 上通过随应用打包的 `resources/daybyday-desktop-window.ps1` 尝试将 Electron BrowserWindow 挂接到 Explorer 的 `Progman` 桌面层；它不是 `setAlwaysOnTop(false)`。只有父窗口、祖先关系、窗口样式、可见性和 Explorer 宿主检查全部通过时，设置页才显示“桌面绑定已验证”。辅助进程每约 1.8 秒检查桌面宿主，Explorer 重启后会尝试重新挂接；如果宿主连续 20 秒不可用，应用会退回 Floating Window。初次挂接失败也会切回 Floating Window 并显示提示。Desktop Widget 模式下，最小化按钮会隐藏组件，托盘图标可恢复；关闭按钮仍按“关闭到托盘”设置决定隐藏或退出。
 
 桌面层挂接会改变窗口的 Win32 父子关系。微软文档指出，跨进程 `SetParent` 在 Windows 10 1703 及之后可能重置子窗口所属进程的 DPI 感知；Electron 官方 BrowserWindow API 没有将普通 BrowserWindow 直接设置为 Explorer 桌面子窗口的公开接口。因此此模式明确标记为实验功能，可能影响高 DPI 缩放；若布局异常，请切回 Floating Window 并重启应用。[Microsoft SetParent 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Electron BrowserWindow 文档](https://www.electronjs.org/docs/latest/api/browser-window)。目前的环境中 Electron 44.9.0 未能显示应用窗口，所以真实 BrowserWindow 挂接、运行时自动恢复和 DPI 行为尚未完成验收。用户确认通过的是独立 WinForms 探针；这不代表 Explorer 重启、多显示器、Windows 10/11 和高 DPI 均已验证。
 
@@ -139,11 +139,17 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-w
 
 Microsoft 说明 `AttachThreadInput` 会重置按键状态，且要求两个线程位于同一桌面；因此连接仅在获得可编辑控件焦点后启用，并在离开后解除。此桥接已通过独立 Electron 探针的文字输入测试（用户确认成功），Windows PowerShell 自动测试也已编译更新后的 Win32 辅助代码。本次使用本地缓存的 Electron ZIP 完成 Forge package，并核对新包内桌面辅助脚本与源码哈希一致，且包含 Windows SQLite、中文和英文 OCR 资源。Squirrel make 已生成 NUPKG，但在 Squirrel 调用归档工具时因系统错误“无效的系统 DLL 重定位”失败，没有生成新的 Setup.exe。**这不等同于已验证 Daybyday 正式安装版**：正式安装版中键盘输入法、中文 IME、焦点切换和退出清理仍需在新安装包生成后验证。
 
-本检查点 Forge package 成功，输出目录中包含桌面辅助脚本。Squirrel `make` 的应用打包步骤成功，但生成安装器时被当前受限环境拒绝访问 `C:\Users\lan\AppData\Roaming\NuGet`，因此本检查点没有产出新的 Setup.exe；也没有尝试修改该用户目录权限。
+### Desktop Widget 绑定诊断补充
+
+独立 WinForms 探针与 Daybyday 使用的目标都是 Explorer 的 `Progman`，但窗口并不相同：探针由 WinForms 自己创建并在其 UI 线程中控制；Daybyday 通过另一个 PowerShell/C# P/Invoke 辅助进程操作 Electron 的 HWND。旧实现只检查 `GetParent`，且 Electron 窗口在隐藏状态下先绑定、随后再调用 `show()`；这不足以证明完整 Electron 窗口确实位于桌面层。该差异和时序是已确认的实现缺陷，但由于当前环境的完整打包程序在创建窗口前以 `0x80000003` 退出，尚不能证明它们是用户所见故障的唯一原因。
+
+新版辅助脚本会记录 Electron HWND、所有者 PID、绑定前后父窗口、`GetAncestor`、Explorer 进程/窗口类、`SetParent` 返回值及 Win32 错误码、窗口样式、可见状态、原生矩形、窗口/宿主线程 ID 与 DPI 信息。主窗口先以不可见样式显示并等待 HWND 稳定，再附着；只有完整核验通过才报告“桌面绑定已验证”。诊断日志在 `%APPDATA%\DayByDay\desktop-widget-diagnostics.jsonl`，只包含版本、程序/辅助程序路径、窗口与宿主句柄、系统 API 结果和错误信息，不记录课程、待办或截图；文件限制在 256 KiB。新版打包目录为 `out/Daybyday-win32-x64/Daybyday.exe`，版本 1.0.0，辅助脚本与源码 SHA-256 一致。**当前 Electron 运行环境仍在启动窗口前退出，所以完整 Daybyday 的桌面层级、输入、拖动、Win+D、Chrome 覆盖及 Explorer 重启均未验证；桌面便签功能不得标记为已完成。**本次没有重试 Squirrel `make`，先保留其独立故障记录。
+
+本次已将 Forge 输出切换到独立的 `.release-out/`，避免重用时清理被占用的 `out/`。应用目录打包与 `.nupkg` 生成成功，但 Squirrel 在 `CreateZipFromDirectory` 启动 `electron-winstaller@5.4.4` 随附的 `7z-x64.exe` 时返回 Windows `ERROR_ILLEGAL_SYSTEM_DLL_RELOCATION`（623 / `0x26F`）。单独运行该 7-Zip 程序的帮助命令也复现同一错误，因此当前阻塞点是此 Windows 环境无法启动该归档辅助程序，不是 NuGet 权限；没有生成新的 Setup.exe，也没有修改系统权限或关闭安全功能。下一步优先在 GitHub Actions 的干净 Windows Runner 上构建。
 
 ### macOS 构建与平台边界（Phase 6.1D）
 
-Forge 保留现有 Windows Squirrel 配置，并增加 macOS ZIP 与原生 DMG maker。DMG 用 macOS 系统自带 `ditto` 复制 App bundle，再由 `hdiutil` 创建压缩镜像，包含 `/Applications` 拖放快捷方式；不使用第三方 DMG/ICNS 解析器。DMG 必须在 macOS runner 上构建；本项目的 `.github/workflows/build.yml` 分别使用 Windows x64、macOS Intel x64 和 Apple Silicon arm64 runner，运行依赖安装、lint、TypeScript、自动化测试、Electron 原生模块重建和安装包构建，产物保存为 Actions Artifacts，不会创建 Release 或上传用户数据。此仓库当前没有 Git remote，因此工作流文件尚未在 GitHub 上实际运行。
+Forge 保留现有 Windows Squirrel 配置，并增加 macOS ZIP 与原生 DMG maker。DMG 用 macOS 系统自带 `ditto` 复制 App bundle，再由 `hdiutil` 创建压缩镜像，包含 `/Applications` 拖放快捷方式；不使用第三方 DMG/ICNS 解析器。DMG 必须在 macOS runner 上构建；`.github/workflows/build.yml` 配置 Windows x64、macOS Intel x64 和 Apple Silicon arm64 runner，运行依赖安装、lint、TypeScript、自动化测试、Electron 原生模块重建和安装包构建，产物保存为 Actions Artifacts，不会创建 Release 或上传用户数据。仓库 `origin` 已配置，但本次环境无法连接 GitHub，因此工作流尚未实际运行。
 
 在匹配目标架构的 Mac 上可运行：
 
@@ -161,7 +167,7 @@ Intel Mac 将最后两条命令中的 `arm64` 改为 `x64`。`npm run make` 会�
 
 macOS 菜单栏托盘使用 Template PNG，以支持浅色和深色菜单栏；系统应用菜单提供 About、Hide、Services、Window 和 Quit 等原生角色。Floating Window 与 Always on Top 由 Electron BrowserWindow 支持。**Desktop Widget 在 macOS 不可用**：Electron 的 macOS `desktop` 窗口类型不接收鼠标和键盘事件，不能满足可交互便签需求；当前会明确显示不支持并回退到普通窗口，不会伪装成取消置顶。实现可交互桌面层需要额外的原生 AppKit 窗口桥接和跨 macOS 版本验收，本阶段未加入。开机登录项在未签名/公证的测试版中关闭；Electron 官方说明 macOS 登录项在未签名且未公证时可能静默失败，因此待正式签名构建后再验证开放。
 
-当前 Windows 本机用缓存 Electron ZIP 成功完成 Forge package，并确认包内只有 `win32-x64.node` 与 Windows 托盘/桌面资源；本轮 Squirrel maker 在访问 `C:\Users\lan\AppData\Roaming\NuGet` 时被系统拒绝，因此没有生成新的 Setup.exe。Mac 无法在这台 Windows 电脑上运行，DMG、Mac SQLite Electron 加载、Dock、菜单栏、Retina、多显示器、Mac 安装/卸载和签名公证均**尚未验证**。GitHub Actions 工作流也尚未运行。此前记录的 Electron 44.9.0 在本机 Windows 11 build 26200 启动前崩溃问题仍然存在。
+当前 Windows 本机用缓存 Electron ZIP 成功完成 Forge package，并确认包内包含 `win32-x64.node` 与 Windows 托盘/桌面资源；Squirrel maker 由于随包 `7z-x64.exe` 在本环境报系统 DLL 重定位错误，没有生成新的 Setup.exe。Mac 无法在这台 Windows 电脑上运行，DMG、Mac SQLite Electron 加载、Dock、菜单栏、Retina、多显示器、Mac 安装/卸载和签名公证均**尚未验证**。GitHub Actions 尚未运行；当前 `git ls-remote` 也无法连接 GitHub，远程分支状态因此未核实。此前记录的 Electron 44.9.0 在本机 Windows 11 build 26200 启动前崩溃问题仍然存在。
 
 ## 手机教务课表结构预览（Phase 5.2 当前完成范围）
 
@@ -191,19 +197,13 @@ SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上�
 
 不要通过删除 `%APPDATA%\DayByDay` 来排查问题，也不要在应用运行时手工替换 `daybyday.sqlite`。遇到数据库版本、权限、磁盘空间或完整性错误时，程序会保留原文件并提示问题。
 
-## Windows 安装包（Phase 6C）
+## Windows 安装包（Phase 6C / 当前构建状态）
 
-Windows x64 安装包由现有 Electron Forge + Squirrel.Windows 配置生成，不需要另行安装 Node.js 才能运行已安装程序。发行版本为 **1.0.0**，安装器显示名称为 **Daybyday**。当前本机测试产物：
+Windows x64 安装包目标仍是 Electron Forge + Squirrel.Windows，版本 **1.0.0**，品牌 **Daybyday**。历史检查点曾生成过未签名的测试 Setup.exe；但当前项目输出目录中没有可交付的 Setup.exe，不能把旧记录当成本次生成结果。
 
-```text
-out\make\squirrel.windows\x64\Daybyday-1.0.0-Setup.exe
-```
+本次最新打包的应用目录位于 `.release-out\Daybyday-win32-x64\`，并包含 Windows x64 SQLite、桌面辅助脚本和本地 OCR 资源。Squirrel 只生成 `.release-out\make\squirrel.windows\x64\daybyday.1.0.0.nupkg`，随后因随包 `7z-x64.exe` 不能在当前 Windows 环境启动而失败；因此**目前没有可安装的 Windows Setup.exe**。需要在 GitHub Actions Windows Runner 上重试 Squirrel 安装器生成。安装包生成后仍需单独验证安装和应用启动，不能把构建通过当成桌面验收通过。
 
-双击 Setup.exe 按提示进行当前 Windows 用户安装；卸载可从 **设置 → 应用 → 已安装的应用** 中移除 Daybyday。Squirrel 安装文件位于 `%LOCALAPPDATA%\daybyday`，用户数据库和偏好仍在 `%APPDATA%\DayByDay`，两者分开。卸载测试确认安装注册项可移除且用户数据目录仍在；卸载后建议先确认备份，再由用户自行决定是否清理该数据目录，安装器不会把数据目录作为应用文件夹删除。
-
-当前 Setup.exe 大小约 **154 MiB**，SHA-256：`FD9E9F3F98D8BEDFD844153810708DC2D513C604AB70E6DC3C3EB4ADC8138FD3`。它是**未签名的本机测试包**，Windows 可能显示 SmartScreen 安全提示；没有伪造签名。包内检查确认包含应用 ASAR、Windows x64 `better-sqlite3` 运行模块、托盘 ICO、Tesseract Worker/WASM 及 `chi_sim`、`eng` 离线语言资源。没有配置自动更新，也没有把测试数据或用户截图打入安装包。
-
-本次实际运行了 Squirrel Setup 静默安装和 `Update.exe --uninstall`；安装器完成、版本目录生成、卸载记录移除均已验证。由于本机 Electron 44.9.0 在 Windows build 26200 上触发 `EXCEPTION_BREAKPOINT` / `0x80000003`，安装后 GUI 启动、开始菜单快捷方式生成、实际离线 OCR、托盘/开机启动、数据增改、备份恢复、升级安装、Windows 重启自启、多显示器和 125%/150% 缩放均**尚未验证**。因此，构建和安装成功不代表应用可在当前机器正常启动；请先在 Electron 可启动的 Windows 环境中手动验收，再用于日常工作或分发。
+安装文件与用户数据库目录分离：Squirrel 安装文件在 `%LOCALAPPDATA%\daybyday`，用户数据库和偏好仍在 `%APPDATA%\DayByDay`。卸载不会主动清理用户数据。发行包目前没有代码签名，Windows 可能显示 SmartScreen 提示；没有伪造签名。
 
 ## 检查
 
@@ -225,7 +225,14 @@ $env:DAYBYDAY_ELECTRON_ZIP_DIR = (Resolve-Path .\.electron-cache).Path
 npm run make -- --platform=win32 --arch=x64
 ```
 
-该环境变量只影响当前 PowerShell 窗口，不会修改系统设置。正式制作安装器需要本机可用的 Squirrel.Windows / NuGet 构建环境。
+该环境变量只影响当前 PowerShell 窗口，不会修改系统设置。若普通 `out/` 被 Windows 占用，可改用项目已支持的隔离输出目录：
+
+```powershell
+$env:DAYBYDAY_OUT_DIR = '.release-out'
+npm run make -- --platform=win32 --arch=x64
+```
+
+此设置也只影响当前 PowerShell 窗口。当前机器的 Squirrel helper 启动错误仍需通过干净的 Windows Runner 构建解决；GitHub Actions 仅保存 Artifacts，不创建 Release。
 
 ## 安全设计
 

@@ -96,9 +96,16 @@ export type ThemeId =
 export type LanguageId = 'zh-CN' | 'zh-TW' | 'ja-JP' | 'ko-KR' | 'en-US';
 export type TrayAction = 'quick-task' | 'week' | 'settings';
 export type WindowMode = 'floating' | 'desktop-widget' | 'always-on-top';
+export type DesktopWidgetBindingStatus =
+  | 'inactive'
+  | 'pending'
+  | 'verified'
+  | 'recovering'
+  | 'failed';
 export type WindowModeState = {
   mode: WindowMode;
   desktopWidgetSupported: boolean;
+  desktopWidgetBindingStatus: DesktopWidgetBindingStatus;
   errorKey?: string;
 };
 export type DesktopSettings = {

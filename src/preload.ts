@@ -82,6 +82,14 @@ const parseWindowModeState = (value: unknown): WindowModeState => {
   if (typeof record.desktopWidgetSupported !== 'boolean')
     throw new Error('窗口模式结果无效。');
   if (
+    record.desktopWidgetBindingStatus !== 'inactive' &&
+    record.desktopWidgetBindingStatus !== 'pending' &&
+    record.desktopWidgetBindingStatus !== 'verified' &&
+    record.desktopWidgetBindingStatus !== 'recovering' &&
+    record.desktopWidgetBindingStatus !== 'failed'
+  )
+    throw new Error('窗口模式结果无效。');
+  if (
     record.errorKey !== undefined &&
     (typeof record.errorKey !== 'string' ||
       !WINDOW_MODE_ERROR_KEYS.has(record.errorKey))
@@ -90,6 +98,7 @@ const parseWindowModeState = (value: unknown): WindowModeState => {
   return {
     mode,
     desktopWidgetSupported: record.desktopWidgetSupported,
+    desktopWidgetBindingStatus: record.desktopWidgetBindingStatus,
     ...(typeof record.errorKey === 'string'
       ? { errorKey: record.errorKey }
       : {}),

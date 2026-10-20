@@ -577,6 +577,8 @@ export function App() {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [windowMode, setWindowMode] = useState<WindowMode>('floating');
   const [desktopWidgetSupported, setDesktopWidgetSupported] = useState(false);
+  const [desktopWidgetBindingStatus, setDesktopWidgetBindingStatus] =
+    useState<WindowModeState['desktopWidgetBindingStatus']>('inactive');
   const [windowModeError, setWindowModeError] = useState('');
   const [windowModeSaving, setWindowModeSaving] = useState(false);
   const [closeToTray, setCloseToTray] = useState(false);
@@ -828,6 +830,7 @@ export function App() {
     setWindowMode(state.mode);
     setAlwaysOnTop(state.mode === 'always-on-top');
     setDesktopWidgetSupported(state.desktopWidgetSupported);
+    setDesktopWidgetBindingStatus(state.desktopWidgetBindingStatus);
     setWindowModeError(state.errorKey ?? '');
   };
 
@@ -1554,11 +1557,29 @@ export function App() {
                     </span>
                     <span className="settings-help">{t(description)}</span>
                     {mode === 'desktop-widget' && desktopWidgetSupported && (
-                      <span className="settings-help">
-                        {t(
-                          '实验功能：Windows 桌面挂接可能影响高 DPI 缩放；若异常，请切回普通悬浮窗并重启应用。',
+                      <>
+                        <span className="settings-help">
+                          {t(
+                            '实验功能：Windows 桌面挂接可能影响高 DPI 缩放；若异常，请切回普通悬浮窗并重启应用。',
+                          )}
+                        </span>
+                        {windowMode === 'desktop-widget' && (
+                          <span
+                            className={`settings-help desktop-widget-binding-status is-${desktopWidgetBindingStatus}`}
+                            role="status"
+                          >
+                            {t(
+                              desktopWidgetBindingStatus === 'verified'
+                                ? '桌面绑定已验证。'
+                                : desktopWidgetBindingStatus === 'pending'
+                                  ? '正在验证 Windows 桌面绑定。'
+                                  : desktopWidgetBindingStatus === 'recovering'
+                                    ? '桌面绑定未确认，正在尝试恢复。'
+                                    : '桌面绑定未验证。',
+                            )}
+                          </span>
                         )}
-                      </span>
+                      </>
                     )}
                     {mode === 'desktop-widget' && !desktopWidgetSupported && (
                       <span className="settings-help">

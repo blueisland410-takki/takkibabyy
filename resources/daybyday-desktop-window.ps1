@@ -21,19 +21,35 @@ $ErrorActionPreference = 'Stop'
 $nativeCode = @'
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
 public static class DaybydayDesktopWindowNative
 {
     private const long GWL_STYLE = -16;
+    private const long GWL_EXSTYLE = -20;
     private const uint WS_CHILD = 0x40000000;
     private const uint WS_POPUP = 0x80000000;
+    private const uint WS_VISIBLE = 0x10000000;
+    private const uint WS_EX_TOPMOST = 0x00000008;
+    private const uint GA_PARENT = 1;
+    private const uint GA_ROOT = 2;
+    private const uint GA_ROOTOWNER = 3;
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_FRAMECHANGED = 0x0020;
     private const uint SWP_SHOWWINDOW = 0x0040;
 
     private delegate bool EnumWindowsCallback(IntPtr hwnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr lParam);
@@ -48,9 +64,23 @@ public static class DaybydayDesktopWindowNative
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr GetParent(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr hwnd, out WindowRect rect);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError")]
+    private static extern void SetLastErrorNative(uint errorCode);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool AttachThreadInput(uint attachThreadId, uint attachToThreadId, bool attach);
     [DllImport("user32.dll", SetLastError = true)]
@@ -91,6 +121,19 @@ public static class DaybydayDesktopWindowNative
     private static IntPtr trackedWindow;
     private static uint trackedProcessId;
     private static IntPtr attachedDesktop;
+    private static IntPtr diagnosticParentBefore;
+    private static uint diagnosticStyleBefore;
+    private static IntPtr diagnosticSetParentReturn;
+    private static int diagnosticSetParentError;
+    private static bool diagnosticSetParentCalled;
+    private static bool diagnosticSetWindowPosSucceeded;
+    private static int diagnosticSetWindowPosError;
+    private static string diagnosticFailureReason = "not-started";
+    private static string diagnosticPhase = "not-started";
+    private static IntPtr diagnosticDesktop;
+    private static uint diagnosticDesktopProcessId;
+    private static uint diagnosticDesktopThreadId;
+    private static bool diagnosticDesktopViewFound;
 
     private static string ClassName(IntPtr hwnd)
     {
@@ -104,6 +147,14 @@ public static class DaybydayDesktopWindowNative
         long value = IntPtr.Size == 8
             ? GetWindowLongPtr64(hwnd, (int)GWL_STYLE).ToInt64()
             : GetWindowLong32(hwnd, (int)GWL_STYLE);
+        return unchecked((uint)value);
+    }
+
+    private static uint ReadExtendedStyle(IntPtr hwnd)
+    {
+        long value = IntPtr.Size == 8
+            ? GetWindowLongPtr64(hwnd, (int)GWL_EXSTYLE).ToInt64()
+            : GetWindowLong32(hwnd, (int)GWL_EXSTYLE);
         return unchecked((uint)value);
     }
 
@@ -150,14 +201,16 @@ public static class DaybydayDesktopWindowNative
         return AttachThreadInput(sourceThreadId, targetThreadId, false);
     }
 
-    private static bool FindDesktop(out IntPtr progman)
+    private static bool FindDesktop(out IntPtr progman, out uint explorerPid)
     {
         IntPtr foundProgman = IntPtr.Zero;
-        uint explorerPid = 0;
+        uint foundExplorerPid = 0;
+        uint foundExplorerThreadId = 0;
+        bool foundIconView = false;
         EnumWindows((hwnd, lParam) => {
             if (ClassName(hwnd) != "Progman") return true;
             uint processId;
-            GetWindowThreadProcessId(hwnd, out processId);
+            uint explorerThreadId = GetWindowThreadProcessId(hwnd, out processId);
             try {
                 if (Process.GetProcessById((int)processId).ProcessName != "explorer") return true;
             } catch { return true; }
@@ -168,46 +221,237 @@ public static class DaybydayDesktopWindowNative
             }, IntPtr.Zero);
             if (!iconView) return true;
             foundProgman = hwnd;
-            explorerPid = processId;
+            foundExplorerPid = processId;
+            foundExplorerThreadId = explorerThreadId;
+            foundIconView = true;
             return false;
         }, IntPtr.Zero);
         progman = foundProgman;
-        return progman != IntPtr.Zero && explorerPid != 0;
+        explorerPid = foundExplorerPid;
+        diagnosticDesktopViewFound = foundIconView;
+        diagnosticDesktop = foundProgman;
+        diagnosticDesktopProcessId = foundExplorerPid;
+        diagnosticDesktopThreadId = foundExplorerThreadId;
+        return progman != IntPtr.Zero && explorerPid != 0 && foundIconView;
+    }
+
+    private static string JsonEscape(string value)
+    {
+        return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    private static string HexHandle(IntPtr hwnd)
+    {
+        return "0x" + unchecked((ulong)hwnd.ToInt64()).ToString("X", CultureInfo.InvariantCulture);
+    }
+
+    private static string ProcessName(uint processId)
+    {
+        if (processId == 0) return "";
+        try { return Process.GetProcessById((int)processId).ProcessName; }
+        catch { return "unavailable"; }
+    }
+
+    private static bool HasDesktopIconView(IntPtr hwnd)
+    {
+        bool iconView = false;
+        if (!IsWindow(hwnd)) return false;
+        EnumChildWindows(hwnd, (child, childParam) => {
+            if (ClassName(child) == "SHELLDLL_DefView") iconView = true;
+            return true;
+        }, IntPtr.Zero);
+        return iconView;
+    }
+
+    public static string GetLastDiagnostic(IntPtr hwnd, int ownerProcessId)
+    {
+        bool windowValid = IsWindow(hwnd);
+        uint actualOwnerProcessId = 0;
+        uint windowThreadId = windowValid ? GetWindowThreadProcessId(hwnd, out actualOwnerProcessId) : 0;
+        IntPtr parentAfter = windowValid ? GetParent(hwnd) : IntPtr.Zero;
+        IntPtr ancestorParent = windowValid ? GetAncestor(hwnd, GA_PARENT) : IntPtr.Zero;
+        IntPtr rootAfter = windowValid ? GetAncestor(hwnd, GA_ROOT) : IntPtr.Zero;
+        IntPtr rootOwnerAfter = windowValid ? GetAncestor(hwnd, GA_ROOTOWNER) : IntPtr.Zero;
+        uint styleAfter = windowValid ? ReadStyle(hwnd) : 0;
+        uint exStyleAfter = windowValid ? ReadExtendedStyle(hwnd) : 0;
+        bool visible = windowValid && IsWindowVisible(hwnd);
+        WindowRect windowRect = new WindowRect();
+        bool hasWindowRect = windowValid && GetWindowRect(hwnd, out windowRect);
+        uint windowDpi = 0;
+        uint desktopDpi = 0;
+        int windowDpiAwareness = -1;
+        int desktopDpiAwareness = -1;
+        try {
+            if (windowValid) {
+                windowDpi = GetDpiForWindow(hwnd);
+                windowDpiAwareness = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd));
+            }
+            if (diagnosticDesktop != IntPtr.Zero) {
+                desktopDpi = GetDpiForWindow(diagnosticDesktop);
+                desktopDpiAwareness = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(diagnosticDesktop));
+            }
+        } catch (EntryPointNotFoundException) {
+            // Windows builds without per-window DPI introspection still get all other binding diagnostics.
+        }
+        bool childStyle = (styleAfter & WS_CHILD) != 0;
+        bool popupStyle = (styleAfter & WS_POPUP) != 0;
+        bool topmostStyle = (exStyleAfter & WS_EX_TOPMOST) != 0;
+        bool isChild = diagnosticDesktop != IntPtr.Zero && windowValid && IsChild(diagnosticDesktop, hwnd);
+        uint actualDesktopProcessId = 0;
+        if (diagnosticDesktop != IntPtr.Zero)
+            GetWindowThreadProcessId(diagnosticDesktop, out actualDesktopProcessId);
+        bool desktopValid = diagnosticDesktop != IntPtr.Zero &&
+            IsWindow(diagnosticDesktop) &&
+            ClassName(diagnosticDesktop) == "Progman" &&
+            actualDesktopProcessId == diagnosticDesktopProcessId &&
+            ProcessName(actualDesktopProcessId) == "explorer" &&
+            HasDesktopIconView(diagnosticDesktop);
+        bool verified = windowValid &&
+            actualOwnerProcessId == unchecked((uint)ownerProcessId) &&
+            desktopValid &&
+            parentAfter == diagnosticDesktop &&
+            rootAfter == diagnosticDesktop &&
+            isChild && childStyle && !popupStyle && !topmostStyle && visible;
+        string desktopClass = diagnosticDesktop == IntPtr.Zero ? "" : ClassName(diagnosticDesktop);
+        return "{" +
+            "\"phase\":\"" + JsonEscape(diagnosticPhase) + "\"," +
+            "\"failureReason\":\"" + JsonEscape(diagnosticFailureReason) + "\"," +
+            "\"windowHandle\":\"" + HexHandle(hwnd) + "\"," +
+            "\"ownerProcessId\":" + ownerProcessId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"actualWindowProcessId\":" + actualOwnerProcessId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"windowThreadId\":" + windowThreadId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"helperThreadId\":" + GetCurrentThreadId().ToString(CultureInfo.InvariantCulture) + "," +
+            "\"windowClass\":\"" + JsonEscape(windowValid ? ClassName(hwnd) : "") + "\"," +
+            "\"windowParentBefore\":\"" + HexHandle(diagnosticParentBefore) + "\"," +
+            "\"windowParentAfter\":\"" + HexHandle(parentAfter) + "\"," +
+            "\"getAncestorParent\":\"" + HexHandle(ancestorParent) + "\"," +
+            "\"getAncestorRoot\":\"" + HexHandle(rootAfter) + "\"," +
+            "\"getAncestorRootOwner\":\"" + HexHandle(rootOwnerAfter) + "\"," +
+            "\"desktopHandle\":\"" + HexHandle(diagnosticDesktop) + "\"," +
+            "\"desktopProcessId\":" + diagnosticDesktopProcessId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"actualDesktopProcessId\":" + actualDesktopProcessId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"desktopThreadId\":" + diagnosticDesktopThreadId.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"desktopProcessName\":\"" + JsonEscape(ProcessName(diagnosticDesktopProcessId)) + "\"," +
+            "\"desktopClass\":\"" + JsonEscape(desktopClass) + "\"," +
+            "\"desktopIconViewFound\":" + (diagnosticDesktopViewFound && HasDesktopIconView(diagnosticDesktop) ? "true" : "false") + "," +
+            "\"desktopWindowVisible\":" + (diagnosticDesktop != IntPtr.Zero && IsWindowVisible(diagnosticDesktop) ? "true" : "false") + "," +
+            "\"setParentCalled\":" + (diagnosticSetParentCalled ? "true" : "false") + "," +
+            "\"setParentReturn\":\"" + HexHandle(diagnosticSetParentReturn) + "\"," +
+            "\"setParentLastError\":" + diagnosticSetParentError.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"setWindowPosSucceeded\":" + (diagnosticSetWindowPosSucceeded ? "true" : "false") + "," +
+            "\"setWindowPosLastError\":" + diagnosticSetWindowPosError.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"styleBefore\":\"0x" + diagnosticStyleBefore.ToString("X8", CultureInfo.InvariantCulture) + "\"," +
+            "\"styleAfter\":\"0x" + styleAfter.ToString("X8", CultureInfo.InvariantCulture) + "\"," +
+            "\"extendedStyleAfter\":\"0x" + exStyleAfter.ToString("X8", CultureInfo.InvariantCulture) + "\"," +
+            "\"windowIsValid\":" + (windowValid ? "true" : "false") + "," +
+            "\"windowVisible\":" + (visible ? "true" : "false") + "," +
+            "\"windowDpi\":" + windowDpi.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"desktopDpi\":" + desktopDpi.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"windowDpiAwareness\":" + windowDpiAwareness.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"desktopDpiAwareness\":" + desktopDpiAwareness.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"nativeRectAvailable\":" + (hasWindowRect ? "true" : "false") + "," +
+            "\"nativeRect\":{\"left\":" + (hasWindowRect ? windowRect.Left : 0).ToString(CultureInfo.InvariantCulture) + ",\"top\":" + (hasWindowRect ? windowRect.Top : 0).ToString(CultureInfo.InvariantCulture) + ",\"right\":" + (hasWindowRect ? windowRect.Right : 0).ToString(CultureInfo.InvariantCulture) + ",\"bottom\":" + (hasWindowRect ? windowRect.Bottom : 0).ToString(CultureInfo.InvariantCulture) + "}," +
+            "\"windowIsTopLevel\":" + (windowValid && rootAfter == hwnd ? "true" : "false") + "," +
+            "\"styleHasChild\":" + (childStyle ? "true" : "false") + "," +
+            "\"styleHasPopup\":" + (popupStyle ? "true" : "false") + "," +
+            "\"styleIsTopmost\":" + (topmostStyle ? "true" : "false") + "," +
+            "\"isChildOfDesktop\":" + (isChild ? "true" : "false") + "," +
+            "\"bindingVerified\":" + (verified ? "true" : "false") + "}";
     }
 
     private static string AttachToCurrentDesktop(IntPtr hwnd, uint ownerProcessId, int x, int y, int width, int height, bool initial)
     {
-        if (!IsWindow(hwnd)) return "window-missing";
+        diagnosticPhase = initial ? "initial-attach" : "reattach";
+        diagnosticFailureReason = "not-started";
+        diagnosticParentBefore = IntPtr.Zero;
+        diagnosticStyleBefore = 0;
+        diagnosticSetParentReturn = IntPtr.Zero;
+        diagnosticSetParentError = 0;
+        diagnosticSetParentCalled = false;
+        diagnosticSetWindowPosSucceeded = false;
+        diagnosticSetWindowPosError = 0;
+        diagnosticDesktop = IntPtr.Zero;
+        diagnosticDesktopProcessId = 0;
+        diagnosticDesktopViewFound = false;
+
+        if (!IsWindow(hwnd)) {
+            diagnosticFailureReason = "window-handle-is-not-valid";
+            return "window-missing";
+        }
         uint actualOwnerProcessId;
         GetWindowThreadProcessId(hwnd, out actualOwnerProcessId);
-        if (actualOwnerProcessId != ownerProcessId) return "window-owner-mismatch";
+        diagnosticParentBefore = GetParent(hwnd);
+        diagnosticStyleBefore = ReadStyle(hwnd);
+        if (actualOwnerProcessId != ownerProcessId) {
+            diagnosticFailureReason = "window-process-id-does-not-match-electron-process";
+            return "window-owner-mismatch";
+        }
         IntPtr progman;
-        if (!FindDesktop(out progman)) return "desktop-unavailable";
-        if (GetParent(hwnd) == progman) {
-            trackedWindow = hwnd;
-            trackedProcessId = ownerProcessId;
-            attachedDesktop = progman;
-            return "attached";
+        uint explorerPid;
+        if (!FindDesktop(out progman, out explorerPid)) {
+            diagnosticFailureReason = "explorer-progman-with-shell-icon-view-not-found";
+            return "desktop-unavailable";
         }
 
-        uint style = ReadStyle(hwnd);
-        WriteStyle(hwnd, (style & ~WS_POPUP) | WS_CHILD);
-        SetParent(hwnd, progman);
-        if (GetParent(hwnd) != progman) {
-            SetParent(hwnd, IntPtr.Zero);
-            WriteStyle(hwnd, (style & ~WS_CHILD) | WS_POPUP);
-            return "attach-failed";
+        uint currentStyle = ReadStyle(hwnd);
+        bool parentIsDesktop = GetParent(hwnd) == progman;
+        if (!parentIsDesktop || (currentStyle & WS_CHILD) == 0 || (currentStyle & WS_POPUP) != 0) {
+            WriteStyle(hwnd, (currentStyle & ~WS_POPUP) | WS_CHILD);
         }
-        if (!SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
-            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)) {
-            SetParent(hwnd, IntPtr.Zero);
-            WriteStyle(hwnd, (style & ~WS_CHILD) | WS_POPUP);
-            return "position-failed";
+        if (!parentIsDesktop) {
+            SetLastErrorNative(0);
+            diagnosticSetParentCalled = true;
+            diagnosticSetParentReturn = SetParent(hwnd, progman);
+            diagnosticSetParentError = Marshal.GetLastWin32Error();
+            if (GetParent(hwnd) != progman) {
+                diagnosticFailureReason = diagnosticSetParentReturn == IntPtr.Zero && diagnosticSetParentError != 0
+                    ? "set-parent-win32-error"
+                    : "get-parent-did-not-match-explorer-progman-after-set-parent";
+                return "binding-verification-failed";
+            }
         }
+
+        SetLastErrorNative(0);
+        diagnosticSetWindowPosSucceeded = SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        diagnosticSetWindowPosError = Marshal.GetLastWin32Error();
+        if (!diagnosticSetWindowPosSucceeded) {
+            diagnosticFailureReason = "set-window-pos-failed";
+            return "binding-verification-failed";
+        }
+
+        if (!VerifyDesktopBinding(hwnd, progman, ownerProcessId)) {
+            diagnosticFailureReason = "post-attach-parent-style-visibility-or-ancestor-check-failed";
+            return "binding-verification-failed";
+        }
+        diagnosticFailureReason = "none";
         trackedWindow = hwnd;
         trackedProcessId = ownerProcessId;
         attachedDesktop = progman;
-        return initial ? "attached" : "reattached";
+        return initial ? "attached-verified" : "reattached-verified";
+    }
+
+    private static bool VerifyDesktopBinding(IntPtr hwnd, IntPtr progman, uint ownerProcessId)
+    {
+        if (!IsWindow(hwnd) || !IsWindow(progman)) return false;
+        uint actualOwnerProcessId;
+        uint actualDesktopProcessId;
+        GetWindowThreadProcessId(hwnd, out actualOwnerProcessId);
+        GetWindowThreadProcessId(progman, out actualDesktopProcessId);
+        uint style = ReadStyle(hwnd);
+        uint exStyle = ReadExtendedStyle(hwnd);
+        return actualOwnerProcessId == ownerProcessId &&
+            ClassName(progman) == "Progman" &&
+            actualDesktopProcessId == diagnosticDesktopProcessId &&
+            ProcessName(actualDesktopProcessId) == "explorer" &&
+            HasDesktopIconView(progman) &&
+            GetParent(hwnd) == progman &&
+            GetAncestor(hwnd, GA_ROOT) == progman &&
+            IsChild(progman, hwnd) &&
+            (style & WS_CHILD) != 0 &&
+            (style & WS_POPUP) == 0 &&
+            (exStyle & WS_EX_TOPMOST) == 0 &&
+            IsWindowVisible(hwnd);
     }
 
     public static string Attach(IntPtr hwnd, int ownerProcessId, int x, int y, int width, int height)
@@ -215,30 +459,78 @@ public static class DaybydayDesktopWindowNative
         return AttachToCurrentDesktop(hwnd, unchecked((uint)ownerProcessId), x, y, width, height, true);
     }
 
+    public static string GetAttachDiagnostic(IntPtr hwnd, int ownerProcessId)
+    {
+        return GetLastDiagnostic(hwnd, ownerProcessId);
+    }
+
     public static string EnsureAttached(IntPtr hwnd, int ownerProcessId, int x, int y, int width, int height)
     {
         if (!IsWindow(hwnd)) return "window-missing";
         IntPtr progman;
-        if (!FindDesktop(out progman)) return "desktop-unavailable";
-        if (GetParent(hwnd) == progman && attachedDesktop == progman) return "attached";
+        uint explorerPid;
+        if (!FindDesktop(out progman, out explorerPid)) {
+            diagnosticPhase = "desktop-watch";
+            diagnosticFailureReason = "explorer-progman-with-shell-icon-view-not-found";
+            return "desktop-unavailable";
+        }
+        if (GetParent(hwnd) == progman && attachedDesktop == progman && VerifyDesktopBinding(hwnd, progman, unchecked((uint)ownerProcessId))) {
+            diagnosticPhase = "desktop-watch";
+            diagnosticParentBefore = GetParent(hwnd);
+            diagnosticStyleBefore = ReadStyle(hwnd);
+            SetLastErrorNative(0);
+            diagnosticSetWindowPosSucceeded = SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            diagnosticSetWindowPosError = Marshal.GetLastWin32Error();
+            if (diagnosticSetWindowPosSucceeded && VerifyDesktopBinding(hwnd, progman, unchecked((uint)ownerProcessId))) {
+                diagnosticFailureReason = "none";
+                return "attached-verified";
+            }
+            diagnosticFailureReason = diagnosticSetWindowPosSucceeded
+                ? "periodic-parent-style-visibility-or-ancestor-check-failed"
+                : "periodic-set-window-pos-failed";
+            return "binding-verification-failed";
+        }
         return AttachToCurrentDesktop(hwnd, unchecked((uint)ownerProcessId), x, y, width, height, false);
     }
 
     public static string Detach(IntPtr hwnd, int ownerProcessId, int x, int y, int width, int height)
     {
         if (!IsWindow(hwnd)) return "window-missing";
+        diagnosticPhase = "detach";
+        diagnosticFailureReason = "not-started";
         uint actualOwnerProcessId;
         GetWindowThreadProcessId(hwnd, out actualOwnerProcessId);
         if (actualOwnerProcessId != unchecked((uint)ownerProcessId)) return "window-owner-mismatch";
         uint style = ReadStyle(hwnd);
-        if ((style & WS_CHILD) != 0) SetParent(hwnd, IntPtr.Zero);
+        diagnosticParentBefore = GetParent(hwnd);
+        diagnosticStyleBefore = style;
+        diagnosticSetParentCalled = false;
+        diagnosticSetParentReturn = IntPtr.Zero;
+        diagnosticSetParentError = 0;
+        if ((style & WS_CHILD) != 0) {
+            SetLastErrorNative(0);
+            diagnosticSetParentCalled = true;
+            diagnosticSetParentReturn = SetParent(hwnd, IntPtr.Zero);
+            diagnosticSetParentError = Marshal.GetLastWin32Error();
+        }
         WriteStyle(hwnd, (style & ~WS_CHILD) | WS_POPUP);
-        if ((ReadStyle(hwnd) & WS_CHILD) != 0) return "detach-failed";
-        if (!SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
-            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)) return "position-failed";
+        if ((ReadStyle(hwnd) & WS_CHILD) != 0 || GetAncestor(hwnd, GA_ROOT) != hwnd) {
+            diagnosticFailureReason = "window-remained-a-child-after-detach";
+            return "detach-failed";
+        }
+        SetLastErrorNative(0);
+        diagnosticSetWindowPosSucceeded = SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        diagnosticSetWindowPosError = Marshal.GetLastWin32Error();
+        if (!diagnosticSetWindowPosSucceeded) {
+            diagnosticFailureReason = "set-window-pos-failed-during-detach";
+            return "position-failed";
+        }
         trackedWindow = IntPtr.Zero;
         trackedProcessId = 0;
         attachedDesktop = IntPtr.Zero;
+        diagnosticFailureReason = "none";
         return "detached";
     }
 }
@@ -249,6 +541,15 @@ $windowHandle = [IntPtr][Convert]::ToInt64($Handle.Substring(2), 16)
 
 function Write-Status([string]$Code) {
   [Console]::Out.WriteLine((ConvertTo-Json -Compress @{ code = $Code }))
+  [Console]::Out.Flush()
+}
+
+function Write-DesktopDiagnostic {
+  $details = [DaybydayDesktopWindowNative]::GetAttachDiagnostic(
+    $windowHandle,
+    $OwnerProcessId
+  )
+  [Console]::Out.WriteLine('{"code":"diagnostic","details":' + $details + '}')
   [Console]::Out.Flush()
 }
 
@@ -307,14 +608,16 @@ function Set-DesktopKeyboardFocus {
 
 if ($Mode -eq 'Detach') {
   $detachCode = [DaybydayDesktopWindowNative]::Detach($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
+  Write-DesktopDiagnostic
   Write-Status $detachCode
   if ($detachCode -ne 'detached' -and $detachCode -ne 'window-missing') { exit 2 }
   exit 0
 }
 
 $status = [DaybydayDesktopWindowNative]::Attach($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
+Write-DesktopDiagnostic
 Write-Status $status
-if ($status -ne 'attached') { exit 2 }
+if ($status -ne 'attached-verified') { exit 2 }
 
 # A bounded poll repairs the parent when Explorer restarts. It never sends
 # private shell messages, edits the registry, or terminates Explorer.
@@ -401,6 +704,7 @@ try {
       $desktopUnavailableSince = $null
     }
     if ($status -ne $lastStatus) {
+      if ($status -ne 'attached-verified') { Write-DesktopDiagnostic }
       Write-Status $status
       $lastStatus = $status
     }

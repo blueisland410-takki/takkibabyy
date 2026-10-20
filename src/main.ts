@@ -51,6 +51,7 @@ import {
 import { translateForLanguage } from './i18n';
 import type {
   CourseImportDecision,
+  DesktopWidgetBindingStatus,
   DesktopSettings,
   FontSizeScale,
   LanguageId,
@@ -94,6 +95,8 @@ const TRAY_ICON_FILE = 'daybyday-tray.ico';
 const MAC_TRAY_ICON_FILE = 'daybyday-trayTemplate.png';
 const LINUX_TRAY_ICON_FILE = 'icon.png';
 const DESKTOP_WINDOW_SCRIPT = 'daybyday-desktop-window.ps1';
+const DESKTOP_WIDGET_DIAGNOSTICS_FILE = 'desktop-widget-diagnostics.jsonl';
+const MAX_DESKTOP_WIDGET_DIAGNOSTICS_BYTES = 256 * 1024;
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -138,6 +141,7 @@ let currentCloseToTray = false;
 let currentLaunchAtStartup = false;
 let currentWindowMode: WindowMode = 'floating';
 let currentWindowModeErrorKey: string | undefined;
+let desktopWidgetBindingStatus: DesktopWidgetBindingStatus = 'inactive';
 let desktopWidgetHelper: ChildProcessWithoutNullStreams | undefined;
 let desktopWidgetTransition = false;
 let desktopWidgetRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -334,12 +338,18 @@ const getDesktopPowerShellPath = () =>
     'powershell.exe',
   );
 
+const getDesktopWindowHandleHex = (window: BrowserWindow) => {
+  const handleBytes = window.getNativeWindowHandle();
+  if (handleBytes.length !== 8)
+    throw new Error('Electron returned an unexpected Windows HWND size.');
+  return `0x${handleBytes.readBigUInt64LE(0).toString(16)}`;
+};
+
 const getDesktopWindowArguments = (
   window: BrowserWindow,
   mode: 'Attach' | 'Detach',
 ) => {
-  const handleBytes = window.getNativeWindowHandle();
-  const handle = `0x${handleBytes.readBigUInt64LE(0).toString(16)}`;
+  const handle = getDesktopWindowHandleHex(window);
   const bounds = window.getBounds();
   return [
     '-NoLogo',
@@ -369,6 +379,7 @@ const getDesktopWindowArguments = (
 const getWindowModeState = (): WindowModeState => ({
   mode: currentWindowMode,
   desktopWidgetSupported: process.platform === 'win32',
+  desktopWidgetBindingStatus,
   ...(currentWindowModeErrorKey ? { errorKey: currentWindowModeErrorKey } : {}),
 });
 
@@ -409,7 +420,14 @@ const sendDesktopWidgetTextFocus = (focused: boolean) => {
   }
 };
 
-const parseDesktopWidgetHelperLine = (line: string) => {
+type DesktopWidgetHelperMessage = {
+  code: string;
+  details?: Record<string, unknown>;
+};
+
+const parseDesktopWidgetHelperLine = (
+  line: string,
+): DesktopWidgetHelperMessage | undefined => {
   try {
     const value: unknown = JSON.parse(line);
     if (
@@ -417,12 +435,65 @@ const parseDesktopWidgetHelperLine = (line: string) => {
       typeof value === 'object' &&
       'code' in value &&
       typeof value.code === 'string'
-    )
-      return value.code;
+    ) {
+      const record = value as Record<string, unknown>;
+      const details =
+        record.details &&
+        typeof record.details === 'object' &&
+        !Array.isArray(record.details)
+          ? (record.details as Record<string, unknown>)
+          : undefined;
+      return {
+        code: value.code,
+        ...(details ? { details } : {}),
+      };
+    }
   } catch {
     // Ignore non-status output so diagnostics never become renderer messages.
   }
   return undefined;
+};
+
+const writeDesktopWidgetDiagnostic = (
+  details: Record<string, unknown>,
+  helperPath: string,
+  helperRuntimePath: string,
+  helperProcessId: number | undefined,
+) => {
+  try {
+    const userDataPath = app.getPath('userData');
+    fs.mkdirSync(userDataPath, { recursive: true });
+    const diagnosticPath = path.join(
+      userDataPath,
+      DESKTOP_WIDGET_DIAGNOSTICS_FILE,
+    );
+    const line =
+      JSON.stringify({
+        ...details,
+        recordedAt: new Date().toISOString(),
+        appVersion: app.getVersion(),
+        executablePath: process.execPath,
+        packaged: app.isPackaged,
+        helperPath,
+        helperRuntimePath,
+        helperProcessId: helperProcessId ?? null,
+      }) + '\n';
+    const previous = fs.existsSync(diagnosticPath)
+      ? fs.readFileSync(diagnosticPath)
+      : Buffer.alloc(0);
+    const next = Buffer.concat([previous, Buffer.from(line, 'utf8')]);
+    const retained =
+      next.length > MAX_DESKTOP_WIDGET_DIAGNOSTICS_BYTES
+        ? next.subarray(next.length - MAX_DESKTOP_WIDGET_DIAGNOSTICS_BYTES)
+        : next;
+    fs.writeFileSync(diagnosticPath, retained);
+  } catch (error) {
+    // Diagnostics are best-effort and never contain user schedule/task data.
+    console.error(
+      'Daybyday desktop widget diagnostics could not be saved.',
+      error instanceof Error ? error.name : 'unknown-error',
+    );
+  }
 };
 
 const startDesktopWidgetHelper = (window: BrowserWindow) =>
@@ -434,9 +505,57 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
     const powershellPath = getDesktopPowerShellPath();
     const scriptPath = getDesktopWidgetScriptPath();
     if (!fs.existsSync(powershellPath) || !fs.existsSync(scriptPath)) {
+      writeDesktopWidgetDiagnostic(
+        {
+          phase: 'helper-launch',
+          failureReason: 'powershell-or-desktop-script-not-found',
+          electronWindowHandle: getDesktopWindowHandleHex(window),
+          ownerProcessId: process.pid,
+          windowVisible: window.isVisible(),
+          bounds: window.getBounds(),
+        },
+        scriptPath,
+        powershellPath,
+        undefined,
+      );
       reject(new Error('Desktop Widget helper is missing.'));
       return;
     }
+
+    let electronWindowHandle: string;
+    try {
+      electronWindowHandle = getDesktopWindowHandleHex(window);
+    } catch (error) {
+      writeDesktopWidgetDiagnostic(
+        {
+          phase: 'helper-launch',
+          failureReason: 'electron-native-window-handle-unavailable',
+          errorName: error instanceof Error ? error.name : 'unknown-error',
+          ownerProcessId: process.pid,
+          windowVisible: window.isVisible(),
+          bounds: window.getBounds(),
+        },
+        scriptPath,
+        powershellPath,
+        undefined,
+      );
+      reject(error);
+      return;
+    }
+    writeDesktopWidgetDiagnostic(
+      {
+        phase: 'helper-launch',
+        failureReason: 'none',
+        electronWindowHandle,
+        ownerProcessId: process.pid,
+        windowVisible: window.isVisible(),
+        bounds: window.getBounds(),
+        expectedDesktopHostClass: 'Progman',
+      },
+      scriptPath,
+      powershellPath,
+      undefined,
+    );
 
     const child = spawn(
       powershellPath,
@@ -448,9 +567,23 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
     let initialStatusReceived = false;
     let settled = false;
     let lastStatus = '';
+    let helperStderr = '';
     const startupTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      writeDesktopWidgetDiagnostic(
+        {
+          phase: 'helper-startup',
+          failureReason:
+            'helper-did-not-report-verified-attachment-before-timeout',
+          electronWindowHandle,
+          ownerProcessId: process.pid,
+          helperStderr: helperStderr.slice(-4096),
+        },
+        scriptPath,
+        powershellPath,
+        child.pid,
+      );
       reject(new Error('Desktop Widget helper timed out.'));
       child.kill();
     }, 8000);
@@ -460,13 +593,24 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
       const lines = output.split(/\r?\n/);
       output = lines.pop() ?? '';
       for (const line of lines) {
-        const code = parseDesktopWidgetHelperLine(line);
-        if (!code) continue;
+        const message = parseDesktopWidgetHelperLine(line);
+        if (!message) continue;
+        const { code } = message;
+        if (code === 'diagnostic') {
+          if (message.details)
+            writeDesktopWidgetDiagnostic(
+              message.details,
+              scriptPath,
+              powershellPath,
+              child.pid,
+            );
+          continue;
+        }
         if (!initialStatusReceived) {
           initialStatusReceived = true;
           lastStatus = code;
           clearTimeout(startupTimer);
-          if (code === 'attached') {
+          if (code === 'attached-verified') {
             settled = true;
             resolve();
           } else {
@@ -496,24 +640,44 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
         }
         if (code === lastStatus) continue;
         lastStatus = code;
-        if (code === 'reattached' || code === 'attached') {
+        if (code === 'reattached-verified' || code === 'attached-verified') {
+          desktopWidgetBindingStatus = 'verified';
           currentWindowModeErrorKey = undefined;
-        } else if (code === 'desktop-unavailable') {
+        } else if (
+          code === 'desktop-unavailable' ||
+          code === 'binding-verification-failed'
+        ) {
+          desktopWidgetBindingStatus = 'recovering';
           currentWindowModeErrorKey =
             'Windows 桌面正在重新加载，Daybyday 正在尝试恢复桌面便签。';
         } else {
+          desktopWidgetBindingStatus = 'recovering';
           currentWindowModeErrorKey =
             '桌面便签暂时无法连接到 Windows 桌面，Daybyday 正在重试。';
         }
         broadcastWindowModeState();
       }
     });
-    child.stderr.on('data', () => {
-      // The helper emits stable status codes on stdout; avoid logging OS details or user data.
+    child.stderr.on('data', (chunk: Buffer) => {
+      helperStderr = (helperStderr + chunk.toString('utf8')).slice(-4096);
     });
     child.on('error', (error) => {
       clearTimeout(startupTimer);
       if (desktopWidgetHelper === child) desktopWidgetHelper = undefined;
+      writeDesktopWidgetDiagnostic(
+        {
+          phase: 'helper-launch',
+          failureReason: 'helper-process-error',
+          errorName: error.name,
+          errorCode: 'code' in error ? error.code : undefined,
+          electronWindowHandle,
+          ownerProcessId: process.pid,
+          helperStderr,
+        },
+        scriptPath,
+        powershellPath,
+        child.pid,
+      );
       if (!settled) {
         settled = true;
         reject(error);
@@ -524,6 +688,19 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
       if (desktopWidgetHelper === child) desktopWidgetHelper = undefined;
       if (!settled) {
         settled = true;
+        writeDesktopWidgetDiagnostic(
+          {
+            phase: 'helper-startup',
+            failureReason: 'helper-exited-before-verified-attachment',
+            exitCode: code,
+            electronWindowHandle,
+            ownerProcessId: process.pid,
+            helperStderr,
+          },
+          scriptPath,
+          powershellPath,
+          child.pid,
+        );
         reject(
           new Error(`Desktop Widget helper exited (${code ?? 'unknown'}).`),
         );
@@ -533,6 +710,7 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
         !desktopWidgetTransition &&
         !isQuitting
       ) {
+        desktopWidgetBindingStatus = 'recovering';
         if (desktopWidgetRecoveryTimer)
           clearTimeout(desktopWidgetRecoveryTimer);
         desktopWidgetRecoveryTimer = setTimeout(() => {
@@ -574,14 +752,32 @@ const runDesktopWidgetDetach = (window: BrowserWindow) =>
     child.on('exit', (code) => {
       if (timeout) clearTimeout(timeout);
       timeout = undefined;
-      const status = output
+      const messages = output
         .split(/\r?\n/)
         .map(parseDesktopWidgetHelperLine)
-        .find(Boolean);
-      if (code === 0 && (status === 'detached' || status === 'window-missing'))
+        .filter((message): message is DesktopWidgetHelperMessage =>
+          Boolean(message),
+        );
+      for (const message of messages) {
+        if (message.code === 'diagnostic' && message.details)
+          writeDesktopWidgetDiagnostic(
+            message.details,
+            getDesktopWidgetScriptPath(),
+            getDesktopPowerShellPath(),
+            child.pid,
+          );
+      }
+      const status = messages.find((message) => message.code !== 'diagnostic');
+      if (
+        code === 0 &&
+        status &&
+        (status.code === 'detached' || status.code === 'window-missing')
+      )
         resolve();
       else
-        reject(new Error(`Desktop Widget detach failed (${status ?? code}).`));
+        reject(
+          new Error(`Desktop Widget detach failed (${status?.code ?? code}).`),
+        );
     });
   });
 
@@ -641,22 +837,26 @@ const applyWindowMode = async (
   currentWindowModeErrorKey = undefined;
   try {
     if (requestedMode === 'desktop-widget') {
+      desktopWidgetBindingStatus = 'pending';
       if (process.platform !== 'win32') {
         await stopDesktopWidgetHelper(true).catch(() => undefined);
         window.setAlwaysOnTop(false);
         currentWindowMode = 'floating';
+        desktopWidgetBindingStatus = 'failed';
         currentWindowModeErrorKey =
           '桌面便签模式目前仅支持 Windows，已切回普通悬浮窗。';
       } else {
         window.setAlwaysOnTop(false);
         try {
           if (!desktopWidgetHelper) await startDesktopWidgetHelper(window);
+          desktopWidgetBindingStatus = 'verified';
           currentWindowMode = 'desktop-widget';
         } catch {
           await stopDesktopWidgetHelper(false).catch(() => undefined);
           await runDesktopWidgetDetach(window).catch(() => undefined);
           window.setAlwaysOnTop(false);
           currentWindowMode = 'floating';
+          desktopWidgetBindingStatus = 'failed';
           currentWindowModeErrorKey =
             'Windows 桌面便签挂接失败，已切回普通悬浮窗。';
         }
@@ -665,6 +865,7 @@ const applyWindowMode = async (
       await stopDesktopWidgetHelper(true);
       window.setAlwaysOnTop(requestedMode === 'always-on-top');
       currentWindowMode = requestedMode;
+      desktopWidgetBindingStatus = 'inactive';
     }
     if (!saveWindowState())
       currentWindowModeErrorKey = '窗口模式已切换，但设置未能保存到本机。';
@@ -685,11 +886,19 @@ const recoverDesktopWidgetHelper = async () => {
   )
     return;
   try {
+    desktopWidgetBindingStatus = 'recovering';
+    currentWindowModeErrorKey =
+      'Windows 桌面正在重新加载，Daybyday 正在尝试恢复桌面便签。';
+    broadcastWindowModeState();
     await startDesktopWidgetHelper(window);
+    desktopWidgetBindingStatus = 'verified';
+    currentWindowModeErrorKey = undefined;
+    broadcastWindowModeState();
   } catch {
     await runDesktopWidgetDetach(window).catch(() => undefined);
     window.setAlwaysOnTop(false);
     currentWindowMode = 'floating';
+    desktopWidgetBindingStatus = 'failed';
     currentWindowModeErrorKey = '桌面便签恢复失败，已切回普通悬浮窗。';
     saveWindowState();
     broadcastWindowModeState();
@@ -2237,6 +2446,8 @@ const createWindow = () => {
   mainWindowReady = false;
   currentWindowMode = savedState.windowMode;
   currentWindowModeErrorKey = undefined;
+  desktopWidgetBindingStatus =
+    savedState.windowMode === 'desktop-widget' ? 'pending' : 'inactive';
   currentFontSizeScale = savedState.fontSizeScale;
   currentThemeId = savedState.themeId;
   currentLanguageId = savedState.languageId;
@@ -2267,10 +2478,19 @@ const createWindow = () => {
     void (async () => {
       const window = mainWindow;
       if (!window || window.isDestroyed()) return;
-      if (savedState.windowMode === 'desktop-widget')
+      if (savedState.windowMode === 'desktop-widget') {
+        // Attach only after Electron has shown its real HWND. Binding a hidden
+        // Chromium window and then calling BrowserWindow.show() can leave the
+        // shell relationship unverified or let Electron apply a later show state.
+        window.setOpacity(0);
+        window.showInactive();
+        await new Promise((resolve) => setTimeout(resolve, 120));
         await applyWindowMode(window, savedState.windowMode);
+        window.setOpacity(1);
+      } else {
+        window.show();
+      }
       mainWindowReady = true;
-      window.show();
       if (pendingTrayAction && mainWindow) {
         const action = pendingTrayAction;
         pendingTrayAction = undefined;

@@ -145,6 +145,7 @@ vite.config.ts.timestamp-*
 
 # Electron-Forge
 out/
+.release-out/
 .test-output/
 .electron-cache/
 .electron-zip/

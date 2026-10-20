@@ -58,12 +58,84 @@ test(
   },
 );
 
+test(
+  'desktop helper emits parseable diagnostics without claiming a missing HWND is attached',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const powershell = path.join(
+      process.env.WINDIR || 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    );
+    const result = spawnSync(
+      powershell,
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        helperPath,
+        '-Mode',
+        'Attach',
+        '-Handle',
+        '0x0',
+        '-OwnerProcessId',
+        '1',
+        '-X',
+        '0',
+        '-Y',
+        '0',
+        '-Width',
+        '440',
+        '-Height',
+        '680',
+      ],
+      { cwd: projectRoot, encoding: 'utf8', windowsHide: true },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 2, result.stderr);
+    const messages = result.stdout
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    const diagnostic = messages.find(
+      (message) => message.code === 'diagnostic',
+    );
+    assert.equal(diagnostic.details.windowHandle, '0x0');
+    assert.equal(diagnostic.details.windowIsValid, false);
+    assert.equal(diagnostic.details.bindingVerified, false);
+    assert.equal(
+      messages.find((message) => message.code !== 'diagnostic').code,
+      'window-missing',
+    );
+  },
+);
+
 test('desktop helper uses a fixed command set without registry or Explorer restart operations', () => {
   const source = fs.readFileSync(helperPath, 'utf8');
   assert.match(source, /ValidateSet\('Attach', 'Detach'\)/);
   assert.match(source, /WS_CHILD/);
   assert.match(source, /SetParent\(hwnd, progman\)/);
   assert.match(source, /EnsureAttached/);
+  assert.match(source, /GetAncestor\(hwnd, GA_ROOT\) == progman/);
+  assert.match(source, /IsWindowVisible\(hwnd\)/);
+  assert.match(source, /WS_CHILD/);
+  assert.match(source, /WS_POPUP/);
+  assert.match(source, /WS_EX_TOPMOST/);
+  assert.match(source, /Marshal\.GetLastWin32Error\(\)/);
+  assert.match(source, /GetLastDiagnostic/);
+  assert.match(source, /windowParentBefore/);
+  assert.match(source, /windowParentAfter/);
+  assert.match(source, /desktopProcessId/);
+  assert.match(source, /helperThreadId/);
+  assert.match(source, /windowDpiAwareness/);
+  assert.match(source, /setParentLastError/);
+  assert.match(source, /bindingVerified/);
+  assert.match(source, /attached-verified/);
   assert.match(source, /ReadLineAsync\(\)/);
   assert.match(
     source,
@@ -85,6 +157,17 @@ test('keyboard focus IPC is restricted to the main frame and Desktop Widget mode
   const appSource = fs.readFileSync(appPath, 'utf8');
 
   assert.match(mainSource, /currentWindowMode !== 'desktop-widget'/);
+  assert.match(mainSource, /code === 'attached-verified'/);
+  assert.match(mainSource, /desktop-widget-diagnostics\.jsonl/);
+  assert.match(mainSource, /helperRuntimePath/);
+  assert.match(mainSource, /desktopWidgetBindingStatus/);
+  assert.ok(
+    mainSource.indexOf('window.showInactive()') <
+      mainSource.indexOf(
+        'await applyWindowMode(window, savedState.windowMode)',
+      ),
+    'saved Desktop Widget mode must attach only after Electron shows its HWND',
+  );
   assert.match(mainSource, /ipcMain\.on\('desktop-widget:input-focus'/);
   assert.match(mainSource, /event\.senderFrame !== event\.sender\.mainFrame/);
   assert.match(
@@ -95,4 +178,5 @@ test('keyboard focus IPC is restricted to the main frame and Desktop Widget mode
   assert.match(appSource, /document\.addEventListener\('focusin'/);
   assert.match(appSource, /document\.addEventListener\('focusout'/);
   assert.match(appSource, /onDesktopWidgetFocusError/);
+  assert.match(appSource, /desktopWidgetBindingStatus === 'verified'/);
 });
