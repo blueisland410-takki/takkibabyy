@@ -106,6 +106,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-app-icon.ps
 
 本检查点的 Windows Forge package 和 Squirrel make 均成功；已从 `Daybyday.exe` 与 `Daybyday-1.0.0-Setup.exe` 提取并检查嵌入图标，32×32 图像的上下背景与 D 字颜色符合 SVG，托盘 ICO 也进入打包资源。安装器仍未签名。`npm start` 没有显示窗口，故滑块的实际鼠标操作、窗口重启后的界面状态仍需在 Electron 可启动的环境中手动验证。
 
+### Desktop Widget 可行性探针（Phase 6.1B）
+
+桌面便签必须挂在 Explorer 桌面窗口层；仅关闭 `setAlwaysOnTop` 并不等于桌面组件。本阶段先加入独立的 Windows 探针 `scripts/desktop-widget-probe.ps1`，不接入 Daybyday 的窗口、设置或数据库。探针只在能够确认 `Progman`、桌面图标视图及其 Explorer 所有者的交互式 Windows 会话中运行；它使用一个可关闭的小窗测试挂接和基本交互，不写注册表、不重启 Explorer。`WorkerW` 的创建消息没有可依赖的公开 Explorer 契约，因此探针不会猜测或强行创建 WorkerW。
+
+在 Windows 本机 PowerShell 中先运行检查：
+
+```powershell
+Set-Location D:\DAYBYDAY
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-widget-probe.ps1 -Mode Inspect
+```
+
+只有检查成功后才运行可见探针：
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-widget-probe.ps1 -Mode Widget
+```
+
+探针出现后按 `Win + D` 查看桌面，点击测试按钮，拖动奶油色标题条并拖动右下角调整大小；随后打开记事本等普通窗口确认它能盖住探针，再按 `Win + D` 返回桌面。探针覆盖的小矩形会接收该区域的点击；若它正好盖住桌面图标，请先把它拖到空白处。按 **Close probe** 或 `Esc` 结束。不要把一次性探针结果当作正式功能：Explorer 重启恢复、多显示器变化、Windows 10/11 差异和实际 Electron 窗口尚未验证。
+
+当前 Codex 执行环境中，脚本能发现一个 `Progman` 窗口，但无法访问其拥有者 PID，且系统未暴露可控制的 Explorer 进程；为避免挂接到其他会话，`Inspect` 会安全停止。现有 Electron 44.9.0 在此 Windows build 26200 环境仍于启动前崩溃。因此本检查点只提供可复现探针，**Desktop Widget 尚未确认可行，也未集成到应用**；应用仍只提供普通悬浮窗和始终置顶行为。只有在实际用户桌面完成可见交互验证、再检查 DPI 和 Explorer 恢复后，才能决定是否进入正式实现。微软说明跨进程 `SetParent` 在 Windows 10 1703 及以后可能重置子进程 DPI awareness，正式接入前必须在 Daybyday 本身验证该风险：[SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Windows High DPI development](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows)。
+
 ## 手机教务课表结构预览（Phase 5.2 当前完成范围）
 
 在 **Semester Planner → Import timetable → Mobile Timetable** 选择手机课表截图，然后点击 **Recognize**。此模式先用 OCR 坐标寻找教学周、星期表头和左侧节次编号，再在表格网格内检测彩色矩形区域，并将矩形内已有 OCR 文字按坐标关联。图像检测会先缩小到最长边不超过 900 像素，避免对高分辨率截图同步扫描全部像素。图片仅在本机页面和本地 OCR Worker 中处理。
