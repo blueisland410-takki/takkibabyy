@@ -352,5 +352,20 @@
   "检测到未完成的数据恢复。为保护原有文件，Daybyday 暂未打开数据库。请勿删除用户数据目录中的 recovery 文件。": "An incomplete data restore was found. Daybyday did not open the database to protect existing files. Do not delete the recovery files in the user data folder.",
   "无法读取当前偏好设置；现有数据未更改，恢复前安全备份已保留。": "Could not read current preferences. Existing data was not changed, and the pre-restore safety backup was kept.",
   "备份版本 {{version}} · 创建时间 {{date}}": "Backup version {{version}} · Created {{date}}",
-  "另一项数据操作正在进行，请稍后再试。": "Another data operation is in progress. Please try again shortly."
+  "另一项数据操作正在进行，请稍后再试。": "Another data operation is in progress. Please try again shortly.",
+  "Window Mode": "Window Mode",
+  "Floating Window": "Floating Window",
+  "Desktop Widget": "Desktop Widget",
+  "普通悬浮窗，可被其他应用窗口覆盖。": "A regular floating window that other app windows can cover.",
+  "固定在 Windows 桌面层；Explorer 重启后会尝试恢复。": "Attached to the Windows desktop layer. Daybyday will try to restore it after Explorer restarts.",
+  "显示在普通应用窗口上方。": "Shown above regular app windows.",
+  "桌面便签模式目前仅支持 Windows。": "Desktop Widget is currently available only on Windows.",
+  "桌面便签模式目前仅支持 Windows，已切回普通悬浮窗。": "Desktop Widget is only available on Windows. The window returned to Floating Window.",
+  "Windows 桌面便签挂接失败，已切回普通悬浮窗。": "Could not attach to the Windows desktop. The window returned to Floating Window.",
+  "桌面便签暂时无法连接到 Windows 桌面，Daybyday 正在重试。": "Daybyday temporarily lost the Windows desktop connection and is retrying.",
+  "Windows 桌面正在重新加载，Daybyday 正在尝试恢复桌面便签。": "The Windows desktop is reloading. Daybyday is trying to restore the widget.",
+  "桌面便签恢复失败，已切回普通悬浮窗。": "Could not restore the desktop widget. The window returned to Floating Window.",
+  "窗口模式已切换，但设置未能保存到本机。": "The window mode changed, but the setting could not be saved locally.",
+  "窗口模式设置失败，请重试。": "Could not change the window mode. Please try again.",
+  "实验功能：Windows 桌面挂接可能影响高 DPI 缩放；若异常，请切回普通悬浮窗并重启应用。": "Experimental: Windows desktop attachment may affect high-DPI scaling. If the layout looks wrong, switch back to Floating Window and restart the app."
 }

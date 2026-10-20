@@ -19,6 +19,8 @@ import type {
   ThemeId,
   Task,
   TaskInput,
+  WindowMode,
+  WindowModeState,
 } from './domain';
 import { SemesterPlanner } from './SemesterPlanner';
 import { mergeAgendaItems } from './scheduleView';
@@ -561,6 +563,10 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [windowMode, setWindowMode] = useState<WindowMode>('floating');
+  const [desktopWidgetSupported, setDesktopWidgetSupported] = useState(false);
+  const [windowModeError, setWindowModeError] = useState('');
+  const [windowModeSaving, setWindowModeSaving] = useState(false);
   const [closeToTray, setCloseToTray] = useState(false);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [startupAvailable, setStartupAvailable] = useState(false);
@@ -760,15 +766,15 @@ export function App() {
         );
       if (result.restored) {
         try {
-          const [desktopSettings, top] = await Promise.all([
+          const [desktopSettings, modeState] = await Promise.all([
             window.dayByDay.getDesktopSettings(),
-            window.dayByDay.getAlwaysOnTop(),
+            window.dayByDay.getWindowMode(),
           ]);
           setCloseToTray(desktopSettings.closeToTray);
           setLaunchAtStartup(desktopSettings.launchAtStartup);
           setStartupAvailable(desktopSettings.startupAvailable);
           setDesktopSettingsLoaded(true);
-          setAlwaysOnTop(top);
+          applyWindowModeState(modeState);
           setDesktopSettingsError('');
         } catch (error) {
           setDesktopSettingsError(getErrorMessage(error));
@@ -802,11 +808,38 @@ export function App() {
     }
   };
 
+  const applyWindowModeState = (state: WindowModeState) => {
+    setWindowMode(state.mode);
+    setAlwaysOnTop(state.mode === 'always-on-top');
+    setDesktopWidgetSupported(state.desktopWidgetSupported);
+    setWindowModeError(state.errorKey ?? '');
+  };
+
+  const selectWindowMode = async (mode: WindowMode) => {
+    if (windowModeSaving) return;
+    setWindowModeSaving(true);
+    setWindowModeError('');
+    try {
+      applyWindowModeState(await window.dayByDay.setWindowMode(mode));
+    } catch {
+      setWindowModeError('窗口模式设置失败，请重试。');
+    } finally {
+      setWindowModeSaving(false);
+    }
+  };
+
+  const toggleAlwaysOnTop = async () => {
+    await selectWindowMode(
+      windowMode === 'always-on-top' ? 'floating' : 'always-on-top',
+    );
+  };
+
   useEffect(() => {
     void window.dayByDay
-      .getAlwaysOnTop()
-      .then(setAlwaysOnTop)
+      .getWindowMode()
+      .then(applyWindowModeState)
       .catch(() => setControlMessage('窗口设置暂时无法读取。'));
+    return window.dayByDay.onWindowModeChanged(applyWindowModeState);
   }, []);
 
   useEffect(() => {
@@ -877,16 +910,6 @@ export function App() {
   const refreshCurrentDay = async () => {
     await loadDay(selectedDate, false);
     setWeekReload((version) => version + 1);
-  };
-
-  const toggleAlwaysOnTop = async () => {
-    try {
-      const nextValue = await window.dayByDay.toggleAlwaysOnTop();
-      setAlwaysOnTop(nextValue);
-      setControlMessage('');
-    } catch {
-      setControlMessage('置顶设置失败，请重试。');
-    }
   };
 
   const toggleCloseToTray = async () => {
@@ -1428,17 +1451,69 @@ export function App() {
                   <h2 id="window-settings-heading">{t('窗口控制')}</h2>
                 </div>
               </div>
-              <div className="desktop-setting-row">
-                <span>{t('Always on Top')}</span>
-                <button
-                  aria-pressed={alwaysOnTop}
-                  className={`language-window-toggle${alwaysOnTop ? ' is-active' : ''}`}
-                  onClick={() => void toggleAlwaysOnTop()}
-                  type="button"
-                >
-                  {t(alwaysOnTop ? 'On' : 'Off')}
-                </button>
+              <div
+                className="window-mode-options"
+                role="group"
+                aria-label={t('Window Mode')}
+              >
+                {(
+                  [
+                    [
+                      'floating',
+                      'Floating Window',
+                      '普通悬浮窗，可被其他应用窗口覆盖。',
+                    ],
+                    [
+                      'desktop-widget',
+                      'Desktop Widget',
+                      '固定在 Windows 桌面层；Explorer 重启后会尝试恢复。',
+                    ],
+                    [
+                      'always-on-top',
+                      'Always on Top',
+                      '显示在普通应用窗口上方。',
+                    ],
+                  ] as const
+                ).map(([mode, label, description]) => (
+                  <button
+                    key={mode}
+                    aria-pressed={windowMode === mode}
+                    className={`window-mode-option${windowMode === mode ? ' is-active' : ''}`}
+                    disabled={
+                      windowModeSaving ||
+                      (mode === 'desktop-widget' && !desktopWidgetSupported)
+                    }
+                    onClick={() => void selectWindowMode(mode)}
+                    type="button"
+                  >
+                    <span className="window-mode-option-heading">
+                      <strong>{t(label)}</strong>
+                      <span
+                        aria-hidden="true"
+                        className="window-mode-indicator"
+                      />
+                    </span>
+                    <span className="settings-help">{t(description)}</span>
+                    {mode === 'desktop-widget' && desktopWidgetSupported && (
+                      <span className="settings-help">
+                        {t(
+                          '实验功能：Windows 桌面挂接可能影响高 DPI 缩放；若异常，请切回普通悬浮窗并重启应用。',
+                        )}
+                      </span>
+                    )}
+                    {mode === 'desktop-widget' && !desktopWidgetSupported && (
+                      <span className="settings-help">
+                        {t('桌面便签模式目前仅支持 Windows。')}
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
+              {windowModeError && (
+                <p className="form-error" role="status">
+                  {t(windowModeError)}
+                </p>
+              )}
               <div className="desktop-setting-row">
                 <div>
                   <span>{t('关闭到托盘')}</span>

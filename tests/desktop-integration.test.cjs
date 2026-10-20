@@ -5,7 +5,22 @@ const {
   getTrayMenuLabels,
   isTrayAction,
   normalizeDesktopPreferenceFlags,
+  isWindowMode,
+  normalizeStoredWindowMode,
 } = require('../.test-output/src/desktopIntegration.js');
+
+test('window mode accepts three explicit modes and migrates legacy pin preference', () => {
+  for (const mode of ['floating', 'desktop-widget', 'always-on-top'])
+    assert.equal(isWindowMode(mode), true);
+  for (const invalid of ['top', 'desktop', null, {}])
+    assert.equal(isWindowMode(invalid), false);
+  assert.equal(
+    normalizeStoredWindowMode('desktop-widget', true),
+    'desktop-widget',
+  );
+  assert.equal(normalizeStoredWindowMode(undefined, true), 'always-on-top');
+  assert.equal(normalizeStoredWindowMode(undefined, false), 'floating');
+});
 
 test('old window preferences keep new Windows options off by default', () => {
   assert.deepEqual(normalizeDesktopPreferenceFlags({ languageId: 'zh-CN' }), {

@@ -23,6 +23,8 @@ import type {
   LanguageId,
   ThemeId,
   TrayAction,
+  WindowMode,
+  WindowModeState,
   MoveDirection,
   Semester,
   SemesterInput,
@@ -51,6 +53,7 @@ import {
   parseFontSizeScale,
   parseLanguageId,
   parseThemeId,
+  parseWindowMode,
 } from './validation';
 
 const initialTheme = parseThemeId(
@@ -60,13 +63,62 @@ const initialLanguage = parseLanguageId(
   ipcRenderer.sendSync('settings:get-initial-language'),
 );
 
+const WINDOW_MODE_ERROR_KEYS = new Set([
+  '桌面便签模式目前仅支持 Windows，已切回普通悬浮窗。',
+  'Windows 桌面便签挂接失败，已切回普通悬浮窗。',
+  '桌面便签暂时无法连接到 Windows 桌面，Daybyday 正在重试。',
+  'Windows 桌面正在重新加载，Daybyday 正在尝试恢复桌面便签。',
+  '桌面便签恢复失败，已切回普通悬浮窗。',
+  '窗口模式已切换，但设置未能保存到本机。',
+  '窗口模式设置失败，请重试。',
+]);
+
+const parseWindowModeState = (value: unknown): WindowModeState => {
+  if (!value || typeof value !== 'object')
+    throw new Error('窗口模式结果无效。');
+  const record = value as Record<string, unknown>;
+  const mode = parseWindowMode(record.mode);
+  if (typeof record.desktopWidgetSupported !== 'boolean')
+    throw new Error('窗口模式结果无效。');
+  if (
+    record.errorKey !== undefined &&
+    (typeof record.errorKey !== 'string' ||
+      !WINDOW_MODE_ERROR_KEYS.has(record.errorKey))
+  )
+    throw new Error('窗口模式结果无效。');
+  return {
+    mode,
+    desktopWidgetSupported: record.desktopWidgetSupported,
+    ...(typeof record.errorKey === 'string'
+      ? { errorKey: record.errorKey }
+      : {}),
+  };
+};
+
 contextBridge.exposeInMainWorld('dayByDay', {
   initialTheme,
   initialLanguage,
-  getAlwaysOnTop: (): Promise<boolean> =>
-    ipcRenderer.invoke('window:get-always-on-top'),
-  toggleAlwaysOnTop: (): Promise<boolean> =>
-    ipcRenderer.invoke('window:toggle-always-on-top'),
+  getWindowMode: async (): Promise<WindowModeState> =>
+    parseWindowModeState(await ipcRenderer.invoke('window:get-mode')),
+  setWindowMode: async (mode: WindowMode): Promise<WindowModeState> => {
+    const requestedMode = parseWindowMode(mode);
+    return parseWindowModeState(
+      await ipcRenderer.invoke('window:set-mode', requestedMode),
+    );
+  },
+  onWindowModeChanged: (
+    callback: (state: WindowModeState) => void,
+  ): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      try {
+        callback(parseWindowModeState(value));
+      } catch {
+        // Ignore malformed notifications from outside the trusted main process.
+      }
+    };
+    ipcRenderer.on('window:mode-changed', listener);
+    return () => ipcRenderer.removeListener('window:mode-changed', listener);
+  },
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   backupData: async (): Promise<BackupOperationResult> => {

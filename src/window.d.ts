@@ -30,6 +30,8 @@ import type {
   TaskInput,
   TaskUpdate,
   RestoreOperationResult,
+  WindowMode,
+  WindowModeState,
 } from './domain';
 
 export {};
@@ -39,8 +41,11 @@ declare global {
     dayByDay: {
       initialTheme: ThemeId;
       initialLanguage: LanguageId;
-      getAlwaysOnTop: () => Promise<boolean>;
-      toggleAlwaysOnTop: () => Promise<boolean>;
+      getWindowMode: () => Promise<WindowModeState>;
+      setWindowMode: (mode: WindowMode) => Promise<WindowModeState>;
+      onWindowModeChanged: (
+        callback: (state: WindowModeState) => void,
+      ) => () => void;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
       backupData: () => Promise<BackupOperationResult>;

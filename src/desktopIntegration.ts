@@ -1,10 +1,28 @@
 import path from 'node:path';
-import type { LanguageId, TrayAction } from './domain';
+import type { LanguageId, TrayAction, WindowMode } from './domain';
 import { translateForLanguage } from './i18n';
 
 export type { TrayAction } from './domain';
 
 const TRAY_ACTIONS: readonly TrayAction[] = ['quick-task', 'week', 'settings'];
+const WINDOW_MODES: readonly WindowMode[] = [
+  'floating',
+  'desktop-widget',
+  'always-on-top',
+];
+
+export const isWindowMode = (value: unknown): value is WindowMode =>
+  typeof value === 'string' && WINDOW_MODES.includes(value as WindowMode);
+
+export const normalizeStoredWindowMode = (
+  value: unknown,
+  legacyAlwaysOnTop: unknown,
+): WindowMode =>
+  isWindowMode(value)
+    ? value
+    : legacyAlwaysOnTop === true
+      ? 'always-on-top'
+      : 'floating';
 
 export const isTrayAction = (value: unknown): value is TrayAction =>
   typeof value === 'string' && TRAY_ACTIONS.includes(value as TrayAction);

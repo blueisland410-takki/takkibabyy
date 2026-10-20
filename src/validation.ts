@@ -17,6 +17,7 @@ import type {
   MoveDirection,
   TaskInput,
   TaskUpdate,
+  WindowMode,
 } from './domain';
 import { getWeekday } from './courseSchedule';
 import { isThemeId } from './theme';
@@ -64,6 +65,16 @@ export function parseLanguageId(value: unknown): LanguageId {
   )
     return value;
   throw new Error('应用语言选项无效。');
+}
+
+export function parseWindowMode(value: unknown): WindowMode {
+  if (
+    value === 'floating' ||
+    value === 'desktop-widget' ||
+    value === 'always-on-top'
+  )
+    return value;
+  throw new Error('窗口模式选项无效。');
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

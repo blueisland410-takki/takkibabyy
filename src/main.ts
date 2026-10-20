@@ -14,6 +14,7 @@ import {
   type Rectangle,
 } from 'electron';
 import fs from 'node:fs';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -44,6 +45,7 @@ import {
   getSquirrelLoginItemOptions,
   getTrayMenuLabels,
   normalizeDesktopPreferenceFlags,
+  normalizeStoredWindowMode,
   type TrayAction,
 } from './desktopIntegration';
 import { translateForLanguage } from './i18n';
@@ -54,6 +56,8 @@ import type {
   LanguageId,
   MoveDirection,
   ThemeId,
+  WindowMode,
+  WindowModeState,
 } from './domain';
 import {
   assertDateKey,
@@ -62,6 +66,7 @@ import {
   parseFontSizeScale,
   parseLanguageId,
   parseThemeId,
+  parseWindowMode,
   parseCourseExceptionInput,
   parseCourseImportDecisions,
   parseCourseImportInputs,
@@ -86,6 +91,7 @@ const MIN_HEIGHT = 420;
 const STATE_FILE = 'window-state.json';
 const OCR_CORE_FILE = 'tesseract-core-lstm.wasm.js';
 const TRAY_ICON_FILE = 'daybyday-tray.ico';
+const DESKTOP_WINDOW_SCRIPT = 'daybyday-desktop-window.ps1';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -105,6 +111,7 @@ type SavedWindowState = {
   width: number;
   height: number;
   alwaysOnTop: boolean;
+  windowMode: WindowMode;
   closeToTray: boolean;
   launchAtStartup: boolean;
   fontSizeScale: FontSizeScale;
@@ -127,6 +134,11 @@ let currentThemeId: ThemeId = 'classic';
 let currentLanguageId: LanguageId = 'zh-CN';
 let currentCloseToTray = false;
 let currentLaunchAtStartup = false;
+let currentWindowMode: WindowMode = 'floating';
+let currentWindowModeErrorKey: string | undefined;
+let desktopWidgetHelper: ChildProcessWithoutNullStreams | undefined;
+let desktopWidgetTransition = false;
+let desktopWidgetRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -180,6 +192,10 @@ const readWindowState = (): SavedWindowState => {
     const parsed = JSON.parse(
       fs.readFileSync(getStatePath(), 'utf8'),
     ) as Record<string, unknown>;
+    const windowMode = normalizeStoredWindowMode(
+      parsed.windowMode,
+      parsed.alwaysOnTop,
+    );
 
     return {
       x: isFiniteNumber(parsed.x) ? Math.round(parsed.x) : undefined,
@@ -190,7 +206,8 @@ const readWindowState = (): SavedWindowState => {
       height: isFiniteNumber(parsed.height)
         ? Math.round(parsed.height)
         : DEFAULT_HEIGHT,
-      alwaysOnTop: parsed.alwaysOnTop === true,
+      alwaysOnTop: windowMode === 'always-on-top',
+      windowMode,
       ...normalizeDesktopPreferenceFlags(parsed),
       fontSizeScale: normalizeStoredFontSizeScale(parsed.fontSizeScale),
       themeId: isThemeId(parsed.themeId) ? parsed.themeId : 'classic',
@@ -208,6 +225,7 @@ const readWindowState = (): SavedWindowState => {
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
       alwaysOnTop: false,
+      windowMode: 'floating',
       closeToTray: false,
       launchAtStartup: false,
       fontSizeScale: 1,
@@ -268,7 +286,8 @@ const saveWindowState = (): boolean => {
   const bounds = mainWindow.getBounds();
   const state: SavedWindowState = {
     ...bounds,
-    alwaysOnTop: mainWindow.isAlwaysOnTop(),
+    alwaysOnTop: currentWindowMode === 'always-on-top',
+    windowMode: currentWindowMode,
     closeToTray: currentCloseToTray,
     launchAtStartup: currentLaunchAtStartup,
     fontSizeScale: currentFontSizeScale,
@@ -295,7 +314,348 @@ const scheduleWindowStateSave = () => {
   saveTimer = setTimeout(() => {
     saveTimer = undefined;
     saveWindowState();
+    sendDesktopWidgetBounds();
   }, 200);
+};
+
+const getDesktopWidgetScriptPath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, DESKTOP_WINDOW_SCRIPT)
+    : path.resolve(__dirname, '../../resources', DESKTOP_WINDOW_SCRIPT);
+
+const getDesktopPowerShellPath = () =>
+  path.join(
+    process.env.WINDIR ?? 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+
+const getDesktopWindowArguments = (
+  window: BrowserWindow,
+  mode: 'Attach' | 'Detach',
+) => {
+  const handleBytes = window.getNativeWindowHandle();
+  const handle = `0x${handleBytes.readBigUInt64LE(0).toString(16)}`;
+  const bounds = window.getBounds();
+  return [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    getDesktopWidgetScriptPath(),
+    '-Mode',
+    mode,
+    '-Handle',
+    handle,
+    '-OwnerProcessId',
+    String(process.pid),
+    '-X',
+    String(bounds.x),
+    '-Y',
+    String(bounds.y),
+    '-Width',
+    String(bounds.width),
+    '-Height',
+    String(bounds.height),
+  ];
+};
+
+const getWindowModeState = (): WindowModeState => ({
+  mode: currentWindowMode,
+  desktopWidgetSupported: process.platform === 'win32',
+  ...(currentWindowModeErrorKey ? { errorKey: currentWindowModeErrorKey } : {}),
+});
+
+const broadcastWindowModeState = () => {
+  const state = getWindowModeState();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed())
+      window.webContents.send('window:mode-changed', state);
+  }
+};
+
+const sendDesktopWidgetBounds = () => {
+  if (!desktopWidgetHelper || !mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = mainWindow.getBounds();
+  try {
+    desktopWidgetHelper.stdin.write(
+      `${JSON.stringify({ command: 'bounds', ...bounds })}\n`,
+    );
+  } catch {
+    // The helper's exit handler will retry the attachment or return to floating mode.
+  }
+};
+
+const parseDesktopWidgetHelperLine = (line: string) => {
+  try {
+    const value: unknown = JSON.parse(line);
+    if (
+      value &&
+      typeof value === 'object' &&
+      'code' in value &&
+      typeof value.code === 'string'
+    )
+      return value.code;
+  } catch {
+    // Ignore non-status output so diagnostics never become renderer messages.
+  }
+  return undefined;
+};
+
+const startDesktopWidgetHelper = (window: BrowserWindow) =>
+  new Promise<void>((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      reject(new Error('Desktop Widget is only available on Windows.'));
+      return;
+    }
+    const powershellPath = getDesktopPowerShellPath();
+    const scriptPath = getDesktopWidgetScriptPath();
+    if (!fs.existsSync(powershellPath) || !fs.existsSync(scriptPath)) {
+      reject(new Error('Desktop Widget helper is missing.'));
+      return;
+    }
+
+    const child = spawn(
+      powershellPath,
+      getDesktopWindowArguments(window, 'Attach'),
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    desktopWidgetHelper = child;
+    let output = '';
+    let initialStatusReceived = false;
+    let settled = false;
+    let lastStatus = '';
+    const startupTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('Desktop Widget helper timed out.'));
+      child.kill();
+    }, 8000);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
+      const lines = output.split(/\r?\n/);
+      output = lines.pop() ?? '';
+      for (const line of lines) {
+        const code = parseDesktopWidgetHelperLine(line);
+        if (!code) continue;
+        if (!initialStatusReceived) {
+          initialStatusReceived = true;
+          lastStatus = code;
+          clearTimeout(startupTimer);
+          if (code === 'attached') {
+            settled = true;
+            resolve();
+          } else {
+            settled = true;
+            reject(new Error(code));
+          }
+          continue;
+        }
+        if (code === lastStatus) continue;
+        lastStatus = code;
+        if (code === 'reattached' || code === 'attached') {
+          currentWindowModeErrorKey = undefined;
+        } else if (code === 'desktop-unavailable') {
+          currentWindowModeErrorKey =
+            'Windows 桌面正在重新加载，Daybyday 正在尝试恢复桌面便签。';
+        } else {
+          currentWindowModeErrorKey =
+            '桌面便签暂时无法连接到 Windows 桌面，Daybyday 正在重试。';
+        }
+        broadcastWindowModeState();
+      }
+    });
+    child.stderr.on('data', () => {
+      // The helper emits stable status codes on stdout; avoid logging OS details or user data.
+    });
+    child.on('error', (error) => {
+      clearTimeout(startupTimer);
+      if (desktopWidgetHelper === child) desktopWidgetHelper = undefined;
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    child.on('exit', (code) => {
+      clearTimeout(startupTimer);
+      if (desktopWidgetHelper === child) desktopWidgetHelper = undefined;
+      if (!settled) {
+        settled = true;
+        reject(
+          new Error(`Desktop Widget helper exited (${code ?? 'unknown'}).`),
+        );
+      }
+      if (
+        currentWindowMode === 'desktop-widget' &&
+        !desktopWidgetTransition &&
+        !isQuitting
+      ) {
+        if (desktopWidgetRecoveryTimer)
+          clearTimeout(desktopWidgetRecoveryTimer);
+        desktopWidgetRecoveryTimer = setTimeout(() => {
+          desktopWidgetRecoveryTimer = undefined;
+          void recoverDesktopWidgetHelper();
+        }, 1200);
+      }
+    });
+  });
+
+const runDesktopWidgetDetach = (window: BrowserWindow) =>
+  new Promise<void>((resolve, reject) => {
+    if (
+      process.platform !== 'win32' ||
+      !fs.existsSync(getDesktopWidgetScriptPath())
+    ) {
+      reject(new Error('Desktop Widget helper is unavailable.'));
+      return;
+    }
+    const child = spawn(
+      getDesktopPowerShellPath(),
+      getDesktopWindowArguments(window, 'Detach'),
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      child.kill();
+      reject(new Error('Desktop Widget detach timed out.'));
+    }, 5000);
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
+    });
+    child.stderr.on('data', () => undefined);
+    child.on('error', (error) => {
+      if (timeout) clearTimeout(timeout);
+      timeout = undefined;
+      reject(error);
+    });
+    child.on('exit', (code) => {
+      if (timeout) clearTimeout(timeout);
+      timeout = undefined;
+      const status = output
+        .split(/\r?\n/)
+        .map(parseDesktopWidgetHelperLine)
+        .find(Boolean);
+      if (code === 0 && (status === 'detached' || status === 'window-missing'))
+        resolve();
+      else
+        reject(new Error(`Desktop Widget detach failed (${status ?? code}).`));
+    });
+  });
+
+const stopDesktopWidgetHelper = async (detach: boolean) => {
+  const child = desktopWidgetHelper;
+  if (!child) {
+    if (
+      detach &&
+      currentWindowMode === 'desktop-widget' &&
+      mainWindow &&
+      !mainWindow.isDestroyed()
+    )
+      await runDesktopWidgetDetach(mainWindow);
+    return;
+  }
+  const bounds = mainWindow?.isDestroyed()
+    ? undefined
+    : mainWindow?.getBounds();
+  const command = detach
+    ? {
+        command: 'detach',
+        x: bounds?.x ?? 0,
+        y: bounds?.y ?? 0,
+        width: bounds?.width ?? DEFAULT_WIDTH,
+        height: bounds?.height ?? DEFAULT_HEIGHT,
+      }
+    : { command: 'stop' };
+  const exit = new Promise<number | null>((resolve) => {
+    child.once('exit', (code) => resolve(code));
+  });
+  try {
+    child.stdin.write(`${JSON.stringify(command)}\n`);
+  } catch {
+    // The one-shot detach below is the safe fallback.
+  }
+  if (!detach) child.stdin.end();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const code = await Promise.race([
+    exit,
+    new Promise<null>((resolve) => {
+      timeout = setTimeout(() => resolve(null), 3000);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  if (code === null) child.kill();
+  if (desktopWidgetHelper === child) desktopWidgetHelper = undefined;
+  if (detach && code !== 0 && mainWindow && !mainWindow.isDestroyed())
+    await runDesktopWidgetDetach(mainWindow);
+};
+
+const applyWindowMode = async (
+  window: BrowserWindow,
+  requestedMode: WindowMode,
+): Promise<WindowModeState> => {
+  if (desktopWidgetTransition) throw new Error('窗口模式设置失败，请重试。');
+  desktopWidgetTransition = true;
+  currentWindowModeErrorKey = undefined;
+  try {
+    if (requestedMode === 'desktop-widget') {
+      if (process.platform !== 'win32') {
+        await stopDesktopWidgetHelper(true).catch(() => undefined);
+        window.setAlwaysOnTop(false);
+        currentWindowMode = 'floating';
+        currentWindowModeErrorKey =
+          '桌面便签模式目前仅支持 Windows，已切回普通悬浮窗。';
+      } else {
+        window.setAlwaysOnTop(false);
+        try {
+          if (!desktopWidgetHelper) await startDesktopWidgetHelper(window);
+          currentWindowMode = 'desktop-widget';
+        } catch {
+          await stopDesktopWidgetHelper(false).catch(() => undefined);
+          await runDesktopWidgetDetach(window).catch(() => undefined);
+          window.setAlwaysOnTop(false);
+          currentWindowMode = 'floating';
+          currentWindowModeErrorKey =
+            'Windows 桌面便签挂接失败，已切回普通悬浮窗。';
+        }
+      }
+    } else {
+      await stopDesktopWidgetHelper(true);
+      window.setAlwaysOnTop(requestedMode === 'always-on-top');
+      currentWindowMode = requestedMode;
+    }
+    if (!saveWindowState())
+      currentWindowModeErrorKey = '窗口模式已切换，但设置未能保存到本机。';
+    broadcastWindowModeState();
+    return getWindowModeState();
+  } finally {
+    desktopWidgetTransition = false;
+  }
+};
+
+const recoverDesktopWidgetHelper = async () => {
+  const window = mainWindow;
+  if (
+    currentWindowMode !== 'desktop-widget' ||
+    !window ||
+    window.isDestroyed() ||
+    isQuitting
+  )
+    return;
+  try {
+    await startDesktopWidgetHelper(window);
+  } catch {
+    await runDesktopWidgetDetach(window).catch(() => undefined);
+    window.setAlwaysOnTop(false);
+    currentWindowMode = 'floating';
+    currentWindowModeErrorKey = '桌面便签恢复失败，已切回普通悬浮窗。';
+    saveWindowState();
+    broadcastWindowModeState();
+  }
 };
 
 const keepWindowVisible = () => {
@@ -311,6 +671,7 @@ const keepWindowVisible = () => {
   ) {
     mainWindow.setBounds(visible);
   }
+  sendDesktopWidgetBounds();
   saveWindowState();
 };
 
@@ -809,7 +1170,10 @@ const parseRestoredPreferences = (bytes: Buffer): RestoredPreferences => {
       : {}),
     width: Math.round(width),
     height: Math.round(height),
-    alwaysOnTop: value.alwaysOnTop,
+    alwaysOnTop:
+      normalizeStoredWindowMode(value.windowMode, value.alwaysOnTop) ===
+      'always-on-top',
+    windowMode: normalizeStoredWindowMode(value.windowMode, value.alwaysOnTop),
     closeToTray: value.closeToTray,
     launchAtStartup: value.launchAtStartup,
     fontSizeScale: normalizeStoredFontSizeScale(value.fontSizeScale),
@@ -1254,7 +1618,7 @@ const restoreUserBackup = async (window: BrowserWindow) => {
     currentLanguageId = restoredPreferences.languageId;
     const restoredBounds = getInitialBounds(restoredPreferences);
     window.setBounds(restoredBounds, false);
-    window.setAlwaysOnTop(restoredPreferences.alwaysOnTop);
+    await applyWindowMode(window, restoredPreferences.windowMode);
     window.setBackgroundColor(getThemeDefinition(currentThemeId).background);
     if (!saveWindowState()) throw new Error('恢复后的偏好设置未能写入本机。');
 
@@ -1319,7 +1683,7 @@ const restoreUserBackup = async (window: BrowserWindow) => {
       currentLaunchAtStartup = oldStartupEnabled;
       if (isWindowsStartupAvailable()) applyStartupSetting(oldStartupEnabled);
       window.setBounds(getInitialBounds(previousState), false);
-      window.setAlwaysOnTop(previousState.alwaysOnTop);
+      await applyWindowMode(window, previousState.windowMode);
       window.setBackgroundColor(
         getThemeDefinition(previousState.themeId).background,
       );
@@ -1381,17 +1745,20 @@ const registerWindowControls = () => {
         window.webContents.send('settings:preferences-changed', preferences);
     }
   };
-  ipcMain.handle('window:get-always-on-top', (event) =>
-    getTrustedWindow(event).isAlwaysOnTop(),
-  );
-  ipcMain.handle('window:toggle-always-on-top', (event) => {
+  ipcMain.handle('window:get-mode', (event) => {
+    getTrustedWindow(event);
+    return getWindowModeState();
+  });
+  ipcMain.handle('window:set-mode', async (event, mode: unknown) => {
     const window = getTrustedWindow(event);
-    window.setAlwaysOnTop(!window.isAlwaysOnTop());
-    saveWindowState();
-    return window.isAlwaysOnTop();
+    return applyWindowMode(window, parseWindowMode(mode));
   });
   ipcMain.handle('window:minimize', (event) => {
-    getTrustedWindow(event).minimize();
+    const window = getTrustedWindow(event);
+    if (currentWindowMode === 'desktop-widget') {
+      window.hide();
+      refreshTrayMenu();
+    } else window.minimize();
   });
   ipcMain.handle('data:backup', async (event) => {
     const window = getTrustedWindow(event);
@@ -1773,6 +2140,8 @@ const registerWindowControls = () => {
 const createWindow = () => {
   const savedState = readWindowState();
   mainWindowReady = false;
+  currentWindowMode = savedState.windowMode;
+  currentWindowModeErrorKey = undefined;
   currentFontSizeScale = savedState.fontSizeScale;
   currentThemeId = savedState.themeId;
   currentLanguageId = savedState.languageId;
@@ -1797,17 +2166,23 @@ const createWindow = () => {
     },
   };
   mainWindow = new BrowserWindow(options);
-  mainWindow.setAlwaysOnTop(savedState.alwaysOnTop);
+  mainWindow.setAlwaysOnTop(savedState.windowMode === 'always-on-top');
 
   mainWindow.once('ready-to-show', () => {
-    mainWindowReady = true;
-    mainWindow?.show();
-    if (pendingTrayAction && mainWindow) {
-      const action = pendingTrayAction;
-      pendingTrayAction = undefined;
-      mainWindow.webContents.send('desktop:tray-action', action);
-    }
-    refreshTrayMenu();
+    void (async () => {
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return;
+      if (savedState.windowMode === 'desktop-widget')
+        await applyWindowMode(window, savedState.windowMode);
+      mainWindowReady = true;
+      window.show();
+      if (pendingTrayAction && mainWindow) {
+        const action = pendingTrayAction;
+        pendingTrayAction = undefined;
+        mainWindow.webContents.send('desktop:tray-action', action);
+      }
+      refreshTrayMenu();
+    })();
   });
   mainWindow.on('move', scheduleWindowStateSave);
   mainWindow.on('resize', scheduleWindowStateSave);
@@ -1901,8 +2276,24 @@ app.on('before-quit', (event) => {
     saveTimer = undefined;
   }
   saveWindowState();
+  if (desktopWidgetRecoveryTimer) {
+    clearTimeout(desktopWidgetRecoveryTimer);
+    desktopWidgetRecoveryTimer = undefined;
+  }
+  if (desktopWidgetHelper) {
+    try {
+      desktopWidgetHelper.stdin.end(`${JSON.stringify({ command: 'stop' })}\n`);
+    } catch {
+      desktopWidgetHelper.kill();
+    }
+  }
   tray?.destroy();
   tray = undefined;
   plannerDatabase?.close();
   plannerDatabase = undefined;
+});
+
+app.on('will-quit', () => {
+  desktopWidgetHelper?.kill();
+  desktopWidgetHelper = undefined;
 });

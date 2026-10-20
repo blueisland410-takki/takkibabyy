@@ -125,7 +125,15 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-w
 
 探针出现后按 `Win + D` 查看桌面，点击测试按钮，拖动奶油色标题条并拖动右下角调整大小；随后打开记事本等普通窗口确认它能盖住探针，再按 `Win + D` 返回桌面。探针覆盖的小矩形会接收该区域的点击；若它正好盖住桌面图标，请先把它拖到空白处。按 **Close probe** 或 `Esc` 结束。不要把一次性探针结果当作正式功能：Explorer 重启恢复、多显示器变化、Windows 10/11 差异和实际 Electron 窗口尚未验证。
 
-当前 Codex 执行环境中，脚本能发现一个 `Progman` 窗口，但无法访问其拥有者 PID，且系统未暴露可控制的 Explorer 进程；为避免挂接到其他会话，`Inspect` 会安全停止。现有 Electron 44.9.0 在此 Windows build 26200 环境仍于启动前崩溃。因此本检查点只提供可复现探针，**Desktop Widget 尚未确认可行，也未集成到应用**；应用仍只提供普通悬浮窗和始终置顶行为。只有在实际用户桌面完成可见交互验证、再检查 DPI 和 Explorer 恢复后，才能决定是否进入正式实现。微软说明跨进程 `SetParent` 在 Windows 10 1703 及以后可能重置子进程 DPI awareness，正式接入前必须在 Daybyday 本身验证该风险：[SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Windows High DPI development](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows)。
+本机 PowerShell 探针已由用户确认通过：组件可见、按钮可交互、普通应用窗口能覆盖、返回桌面后可见，并可拖动和缩放。探针测试的是 WinForms 临时窗口，不等同于已验证 Daybyday 的 Electron BrowserWindow；Explorer 重启、多显示器、Windows 10/11 差异仍需单独检查。
+
+### Window Mode：桌面便签（Phase 6.1C，Windows 实验功能）
+
+在 **Settings → Window Mode** 可切换 **Floating Window**、**Desktop Widget** 和 **Always on Top**。三种模式有独立保存值；旧版只保存“始终置顶”的 `window-state.json` 会自动迁移到 Floating Window 或 Always on Top。顶部图钉按钮可设为 Always on Top，再次点击会回到 Floating Window。Desktop Widget 在 Windows 上将当前 BrowserWindow 通过随应用打包的 `resources/daybyday-desktop-window.ps1` 挂接到 Explorer 的 `Progman` 桌面层；它不是 `setAlwaysOnTop(false)`。辅助进程每约 1.8 秒检查桌面宿主，Explorer 重启后会尝试重新挂接；如果宿主连续 20 秒不可用，应用会退回 Floating Window。初次挂接失败也会切回 Floating Window 并显示提示。Desktop Widget 模式下，最小化按钮会隐藏组件，托盘图标可恢复；关闭按钮仍按“关闭到托盘”设置决定隐藏或退出。
+
+桌面层挂接会改变窗口的 Win32 父子关系。微软文档指出，跨进程 `SetParent` 在 Windows 10 1703 及之后可能重置子窗口所属进程的 DPI 感知；Electron 官方 BrowserWindow API 没有将普通 BrowserWindow 直接设置为 Explorer 桌面子窗口的公开接口。因此此模式明确标记为实验功能，可能影响高 DPI 缩放；若布局异常，请切回 Floating Window 并重启应用。[Microsoft SetParent 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Electron BrowserWindow 文档](https://www.electronjs.org/docs/latest/api/browser-window)。目前的环境中 Electron 44.9.0 未能显示应用窗口，所以真实 BrowserWindow 挂接、运行时自动恢复和 DPI 行为尚未完成验收。用户确认通过的是独立 WinForms 探针；这不代表 Explorer 重启、多显示器、Windows 10/11 和高 DPI 均已验证。
+
+本检查点 Forge package 成功，输出目录中包含桌面辅助脚本。Squirrel `make` 的应用打包步骤成功，但生成安装器时被当前受限环境拒绝访问 `C:\Users\lan\AppData\Roaming\NuGet`，因此本检查点没有产出新的 Setup.exe；也没有尝试修改该用户目录权限。
 
 ## 手机教务课表结构预览（Phase 5.2 当前完成范围）
 

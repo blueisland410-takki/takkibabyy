@@ -95,6 +95,12 @@ export type ThemeId =
   | 'y2k-pink';
 export type LanguageId = 'zh-CN' | 'zh-TW' | 'ja-JP' | 'ko-KR' | 'en-US';
 export type TrayAction = 'quick-task' | 'week' | 'settings';
+export type WindowMode = 'floating' | 'desktop-widget' | 'always-on-top';
+export type WindowModeState = {
+  mode: WindowMode;
+  desktopWidgetSupported: boolean;
+  errorKey?: string;
+};
 export type DesktopSettings = {
   closeToTray: boolean;
   launchAtStartup: boolean;

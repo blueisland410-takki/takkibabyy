@@ -23,6 +23,7 @@ const config: ForgeConfig = {
       path.resolve('resources/ocr'),
       path.resolve('resources/better-sqlite3'),
       path.resolve('resources/daybyday-tray.ico'),
+      path.resolve('resources/daybyday-desktop-window.ps1'),
     ],
     download: { cacheRoot: path.resolve('.electron-cache') },
     tmpdir: path.resolve('.package-temp'),
