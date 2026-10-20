@@ -11,6 +11,11 @@ import path from 'node:path';
 
 const config: ForgeConfig = {
   packagerConfig: {
+    // Keep package.json's productName unchanged so Electron continues to use
+    // the existing %APPDATA%\DayByDay user-data location.
+    name: 'Daybyday',
+    executableName: 'Daybyday',
+    icon: path.resolve('resources/daybyday-tray.ico'),
     asar: true,
     // The Vite plugin bundles dependencies by default. Ship the native SQLite
     // package beside the OCR resources and load it from this fixed path.
@@ -32,7 +37,17 @@ const config: ForgeConfig = {
   // without changing the binary used by its platform entry point.
   rebuildConfig: { ignoreModules: ['better-sqlite3'] },
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      title: 'Daybyday',
+      exe: 'Daybyday.exe',
+      setupExe: 'Daybyday-1.0.0-Setup.exe',
+      setupIcon: path.resolve('resources/daybyday-tray.ico'),
+      // electron-winstaller's preliminary rcedit step cannot commit edits to
+      // its bundled Squirrel.exe on this Windows build. Keep the product icon
+      // on the app and Setup.exe, and leave Update.exe's own icon untouched.
+      skipUpdateIcon: true,
+      noMsi: true,
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

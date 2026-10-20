@@ -84,9 +84,9 @@ npm start
 
 **Settings → Window** 中的 **关闭到托盘** 默认关闭。关闭时会保存窗口位置、大小和设置；关闭到托盘开启后，点窗口的关闭按钮只会隐藏窗口，应用继续运行。最小化仍是普通最小化，点托盘图标可以恢复。托盘菜单中的“完全退出 Daybyday”会结束应用并关闭 SQLite 连接。
 
-**Launch at Windows startup** 默认关闭。只有正式安装的 Squirrel.Windows 版本才可切换；开发版会显示不可用状态，也不会注册开发目录或 npm 启动命令。程序通过 Electron 的 Windows 登录启动 API 查询实际启动状态，并使用 Squirrel 版本目录上一层的稳定启动器，以便升级后仍启动最新版本。此阶段自动化测试覆盖了启动器路径和五种语言的菜单文案；尚未制作/安装正式 Squirrel 安装包，也没有实际改动 Windows 启动项，因此安装版启动项、升级和重启 Windows 后自动启动仍需在 Phase 6C 安装测试中验证。
+**Launch at Windows startup** 默认关闭。只有正式安装的 Squirrel.Windows 版本才可切换；开发版会显示不可用状态，也不会注册开发目录或 npm 启动命令。程序通过 Electron 的 Windows 登录启动 API 查询实际启动状态，并使用 Squirrel 版本目录上一层的稳定启动器，以便升级后仍启动最新版本。Phase 6C 已构建并安装/卸载测试 Squirrel 安装程序，但 Electron 启动器在本机崩溃，故设置页、实际启动项切换、升级和 Windows 重启后的自动启动仍未验证。
 
-桌面运行验证当前受 Electron 运行时故障阻挡：在这台 Windows 11（OS build 26200）环境中，`electron --version` 自身触发 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`）；`npm start` 和打包目录中的 exe 也未能打开窗口。该错误发生在 Electron 主进程代码运行前，因此本阶段托盘、关闭到托盘和窗口 UI 行为还没有实际 GUI 验证。类型检查、lint、自动化测试和 Forge 打包均通过；启动尝试使用 `.test-output` 隔离的 APPDATA，没有访问或改写正式 `%APPDATA%\DayByDay` 用户数据。需要先解决这台环境的 Electron 运行时问题，再完成 GUI 手动验收。
+桌面运行验证当前受 Electron 运行时故障阻挡：在这台 Windows 11（OS build 26200）环境中，`electron --version` 自身触发 `EXCEPTION_BREAKPOINT`（退出码 `0x80000003`）；`npm start` 和打包目录中的 exe 也未能打开窗口。该错误发生在 Electron 主进程代码运行前，因此托盘、关闭到托盘和窗口 UI 行为还没有实际 GUI 验证。Phase 6C 也直接运行了安装后的 `Daybyday.exe --version`，仍以 `0x80000003` 退出。类型检查、lint、自动化测试、Forge 打包和 Squirrel 安装/卸载流程通过；运行尝试没有访问或改写正式 `%APPDATA%\DayByDay` 数据内容。需要先解决这台环境的 Electron 运行时问题，再完成 GUI 手动验收。
 
 托盘关闭偏好和最后一次读取的启动偏好沿用 `window-state.json` 保存；SQLite 文件和已有业务数据不会迁移或重建。`package.json` 中现有 `productName` 与 AppUserModelID 保持原样，以避免改变既有安装及用户数据标识；窗口和托盘中的可见品牌为 **Daybyday**。
 
@@ -122,6 +122,20 @@ SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上�
 
 不要通过删除 `%APPDATA%\DayByDay` 来排查问题，也不要在应用运行时手工替换 `daybyday.sqlite`。遇到数据库版本、权限、磁盘空间或完整性错误时，程序会保留原文件并提示问题。
 
+## Windows 安装包（Phase 6C）
+
+Windows x64 安装包由现有 Electron Forge + Squirrel.Windows 配置生成，不需要另行安装 Node.js 才能运行已安装程序。发行版本为 **1.0.0**，安装器显示名称为 **Daybyday**。当前本机测试产物：
+
+```text
+out\make\squirrel.windows\x64\Daybyday-1.0.0-Setup.exe
+```
+
+双击 Setup.exe 按提示进行当前 Windows 用户安装；卸载可从 **设置 → 应用 → 已安装的应用** 中移除 Daybyday。Squirrel 安装文件位于 `%LOCALAPPDATA%\daybyday`，用户数据库和偏好仍在 `%APPDATA%\DayByDay`，两者分开。卸载测试确认安装注册项可移除且用户数据目录仍在；卸载后建议先确认备份，再由用户自行决定是否清理该数据目录，安装器不会把数据目录作为应用文件夹删除。
+
+当前 Setup.exe 大小约 **154 MiB**，SHA-256：`FD9E9F3F98D8BEDFD844153810708DC2D513C604AB70E6DC3C3EB4ADC8138FD3`。它是**未签名的本机测试包**，Windows 可能显示 SmartScreen 安全提示；没有伪造签名。包内检查确认包含应用 ASAR、Windows x64 `better-sqlite3` 运行模块、托盘 ICO、Tesseract Worker/WASM 及 `chi_sim`、`eng` 离线语言资源。没有配置自动更新，也没有把测试数据或用户截图打入安装包。
+
+本次实际运行了 Squirrel Setup 静默安装和 `Update.exe --uninstall`；安装器完成、版本目录生成、卸载记录移除均已验证。由于本机 Electron 44.9.0 在 Windows build 26200 上触发 `EXCEPTION_BREAKPOINT` / `0x80000003`，安装后 GUI 启动、开始菜单快捷方式生成、实际离线 OCR、托盘/开机启动、数据增改、备份恢复、升级安装、Windows 重启自启、多显示器和 125%/150% 缩放均**尚未验证**。因此，构建和安装成功不代表应用可在当前机器正常启动；请先在 Electron 可启动的 Windows 环境中手动验收，再用于日常工作或分发。
+
 ## 检查
 
 在项目目录运行：
@@ -130,19 +144,19 @@ SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上�
 npm run typecheck
 npm run lint
 npm test
-npm run package
+npm run make -- --platform=win32 --arch=x64
 ```
 
-自动化测试对系统临时目录中的独立数据库执行，会在测试结束后清理；不会访问正式用户数据库。`npm run package` 生成打包目录；Windows 安装程序制作仍需单独验证。
+自动化测试对系统临时目录中的独立数据库执行，会在测试结束后清理；不会访问正式用户数据库。`npm run package` 只生成打包目录；`npm run make -- --platform=win32 --arch=x64` 才会生成 Windows 安装器。
 
 若打包时在 `Copying files` 步骤出现网络 `fetch failed`，而项目 `.electron-cache` 内已有匹配版本的 Electron ZIP，可在当前 PowerShell 窗口指定本地 ZIP 目录后重试：
 
 ```powershell
 $env:DAYBYDAY_ELECTRON_ZIP_DIR = (Resolve-Path .\.electron-cache).Path
-npm run package
+npm run make -- --platform=win32 --arch=x64
 ```
 
-该环境变量只影响当前 PowerShell 窗口，不会修改系统设置。本次 Phase 5.3 验证使用项目本地缓存成功完成打包。
+该环境变量只影响当前 PowerShell 窗口，不会修改系统设置。正式制作安装器需要本机可用的 Squirrel.Windows / NuGet 构建环境。
 
 ## 安全设计
 

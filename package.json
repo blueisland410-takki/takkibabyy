@@ -3,7 +3,7 @@
   "productName": "DayByDay",
   "version": "1.0.0",
   "private": true,
-  "description": "A gentle daily planner for Windows",
+  "description": "A local Windows planner for daily tasks, schedules, and semester courses",
   "keywords": [],
   "license": "MIT",
   "author": "lan",
