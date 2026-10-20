@@ -26,16 +26,27 @@ const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const FONT_SIZE_SCALES: FontSizeScale[] = [1, 1.15, 1.25, 1.5];
+const FONT_SIZE_SCALES: FontSizeScale[] = [
+  0.8, 0.85, 0.9, 0.95, 1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3,
+];
 
 export function parseFontSizeScale(value: unknown): FontSizeScale {
   if (
     typeof value !== 'number' ||
     !FONT_SIZE_SCALES.includes(value as FontSizeScale)
   ) {
-    throw new Error('字体大小选项无效，请从 100%、115%、125% 或 150% 中选择。');
+    throw new Error('字体大小选项无效，请从 80% 到 130% 中按 5% 步长选择。');
   }
   return value as FontSizeScale;
+}
+
+export function normalizeStoredFontSizeScale(value: unknown): FontSizeScale {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1;
+  const percent = Math.max(
+    80,
+    Math.min(130, Math.round((value * 100) / 5) * 5),
+  );
+  return (percent / 100) as FontSizeScale;
 }
 
 export function parseThemeId(value: unknown): ThemeId {

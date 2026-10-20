@@ -1942,27 +1942,50 @@ button:disabled {
   background: var(--accent-subtle);
   color: #79684f;
 }
-.font-size-options {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 14px;
-}
-.font-size-options button {
-  min-width: 0;
+.font-size-control {
+  display: flex;
   min-height: 40px;
-  border: 1px solid #e8e3da;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  gap: 12px;
+}
+.font-size-value {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  font-weight: 650;
+}
+.reset-font-size-button {
+  min-height: 36px;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  padding: 5px;
+  padding: 6px 12px;
   background: var(--surface);
-  color: #71695e;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: var(--font-button);
 }
-.font-size-options button.is-active {
-  border-color: #b69d80;
-  background: var(--accent-subtle);
-  color: #564936;
+.reset-font-size-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.font-size-slider {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  margin: 5px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.font-size-slider:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+.font-size-range-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
 }
 .row-actions {
   padding-top: 5px;
@@ -2102,7 +2125,6 @@ button:disabled {
 .app-shell .week-day.is-selected,
 .app-shell .view-tabs button.is-active,
 .app-shell .import-method-switch button.is-selected,
-.app-shell .font-size-options button.is-active,
 .app-shell .theme-option.is-active {
   border-color: var(--accent);
   background-color: var(--accent-subtle);
@@ -2157,7 +2179,7 @@ button:disabled {
     .quiet-button,
     .today-button,
     .week-view-actions button,
-    .font-size-options button,
+    .reset-font-size-button,
     .theme-option,
     .reset-theme-button
   ) {

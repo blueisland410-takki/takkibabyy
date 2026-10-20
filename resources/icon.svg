@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="app-shape">
+      <path d="M210 0h604a210 210 0 0 1 210 210v604a210 210 0 0 1-210 210H210A210 210 0 0 1 0 814V210A210 210 0 0 1 210 0Z"/>
+    </clipPath>
+  </defs>
+  <path fill="#F8F6F1" d="M210 0h604a210 210 0 0 1 210 210v604a210 210 0 0 1-210 210H210A210 210 0 0 1 0 814V210A210 210 0 0 1 210 0Z"/>
+  <path clip-path="url(#app-shape)" fill="#E8D9C4" d="M0 512h1024v302a210 210 0 0 1-210 210H210A210 210 0 0 1 0 814Z"/>
+  <path fill="#3C3935" fill-rule="evenodd" d="M300 245h185c197 0 310 99 310 267S682 779 485 779H300Zm135 130v274h50c115 0 170-47 170-137s-55-137-170-137Z"/>
+</svg>

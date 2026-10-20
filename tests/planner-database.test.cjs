@@ -11,6 +11,7 @@ const {
   parseCourseInput,
   parseSemesterInput,
   parseFontSizeScale,
+  normalizeStoredFontSizeScale,
 } = require('../.test-output/src/validation.js');
 const {
   courseDateForWeek,
@@ -19,13 +20,21 @@ const {
 } = require('../.test-output/src/courseSchedule.js');
 const { mergeAgendaItems } = require('../.test-output/src/scheduleView.js');
 
-test('font size preferences accept only the four supported persisted scales', () => {
+test('font size preferences accept the eleven supported slider values', () => {
+  const percentages = [80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130];
   assert.deepEqual(
-    [1, 1.15, 1.25, 1.5].map(parseFontSizeScale),
-    [1, 1.15, 1.25, 1.5],
+    percentages.map((percent) => parseFontSizeScale(percent / 100)),
+    percentages.map((percent) => percent / 100),
   );
-  for (const invalid of [0.9, 1.1, 2, '125%', null])
+  for (const invalid of [0.79, 0.82, 1.01, 1.31, 1.5, 2, '125%', null])
     assert.throws(() => parseFontSizeScale(invalid), /字体大小选项无效/);
+});
+
+test('legacy saved font scales migrate safely into the new range', () => {
+  assert.deepEqual(
+    [0.8, 1, 1.15, 1.25, 1.5, 2, 0.5, '150%'].map(normalizeStoredFontSizeScale),
+    [0.8, 1, 1.15, 1.25, 1.3, 1.3, 0.8, 1],
+  );
 });
 
 let temporaryDirectory;

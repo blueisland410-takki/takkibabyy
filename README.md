@@ -72,7 +72,7 @@ npm start
 
 新安装默认使用 440 × 680 的窗口；已经保存过的窗口位置、大小和置顶状态会继续恢复，不会因升级而被覆盖。窗口仍可拖动和缩放。
 
-顶部 **Settings** → **Font size** 可选 100%、115%、125% 或 150%。设置保存到 Electron 用户数据目录中的窗口设置文件，重启后继续生效。若旧窗口尺寸较小，Settings 会提示可以拖动边缘扩大；软件不会擅自改写你保存的尺寸。文字变大后主内容、课程卡片和弹窗可换行并滚动。
+顶部 **Settings** → **Font size** 可用滑块在 80%–130% 之间以 5% 步长调整；百分比即时显示，字体立即变化并自动保存。**Reset** 可恢复 100%。设置保存在 Electron 用户数据目录中的窗口设置文件，重启后继续生效。旧版 150% 设置升级后安全限制为 130%，其他原有档位会保留。若旧窗口尺寸较小，Settings 会提示可以拖动边缘扩大；软件不会擅自改写你保存的窗口尺寸。文字变大后主内容、课程卡片和弹窗可换行并滚动。
 
 **Settings → Appearance → Theme Color** 提供九套主题。**Soft & Muted** 包含 Classic、Dusty Rose、Sage Green、Misty Blue、Muted Lavender 和 Oat Beige；**Pop & Playful** 包含 Mint Pop、Sapphire 和 Y2K Pink。点击后立即预览，关闭并重启应用后仍会保留；**Reset to default** 可恢复 Classic。普通文字保持深色；薄荷绿和粉色强调按钮使用深色文字，宝石蓝使用白色文字，并由自动化测试检查对比度。
 
@@ -93,6 +93,18 @@ npm start
 应用语言资源位于 `locales/zh-CN.json`、`locales/zh-TW.json`、`locales/ja-JP.json`、`locales/ko-KR.json` 和 `locales/en-US.json`。五份资源使用同一组翻译键；页面切换不改变 OCR 语言、教学周次、单双周规则或本地日期计算。未收录的底层错误在非简体中文界面显示通用重试提示，避免把简体中文错误直接混入其他语言；简体中文保留原始详细错误，新增用户可见错误时应同步补充各语言资源。
 
 全应用字号由 CSS 字体变量统一管理：说明文字最低 13px，按钮约 15px，正文约 16px，栏目标题约 19px，主标题约 24px；所选比例会统一应用到今日视图、周视图、学期管理和导入校对页面。Electron 窗口按 Windows 逻辑像素布局，适配 125% / 150% 显示缩放；实际显示效果仍建议在目标电脑上查看。
+
+### 应用图标与字号（Phase 6.1 检查点 A）
+
+应用图标使用奶油色圆角方块和深灰大写 **D**。矢量主资源为 `resources/icon.svg`；`resources/icon.png`（1024×1024）、`resources/icon.ico`（Windows 桌面、任务栏和安装包）和 `resources/icon.icns`（macOS 图标资源）由 `scripts/render-app-icon.ps1` 导出。Windows 系统托盘使用同一设计生成的 `resources/daybyday-tray.ico`。重新绘制 SVG 后，可在项目 PowerShell 中运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-app-icon.ps1
+```
+
+当前只更新了 Windows 图标引用并提供 macOS ICNS 资源；macOS 应用打包和安装尚未在本检查点实现或验证。
+
+本检查点的 Windows Forge package 和 Squirrel make 均成功；已从 `Daybyday.exe` 与 `Daybyday-1.0.0-Setup.exe` 提取并检查嵌入图标，32×32 图像的上下背景与 D 字颜色符合 SVG，托盘 ICO 也进入打包资源。安装器仍未签名。`npm start` 没有显示窗口，故滑块的实际鼠标操作、窗口重启后的界面状态仍需在 Electron 可启动的环境中手动验证。
 
 ## 手机教务课表结构预览（Phase 5.2 当前完成范围）
 

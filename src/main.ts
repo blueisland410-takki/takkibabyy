@@ -58,6 +58,7 @@ import type {
 import {
   assertDateKey,
   assertId,
+  normalizeStoredFontSizeScale,
   parseFontSizeScale,
   parseLanguageId,
   parseThemeId,
@@ -191,9 +192,7 @@ const readWindowState = (): SavedWindowState => {
         : DEFAULT_HEIGHT,
       alwaysOnTop: parsed.alwaysOnTop === true,
       ...normalizeDesktopPreferenceFlags(parsed),
-      fontSizeScale: isFontSizeScale(parsed.fontSizeScale)
-        ? parsed.fontSizeScale
-        : 1,
+      fontSizeScale: normalizeStoredFontSizeScale(parsed.fontSizeScale),
       themeId: isThemeId(parsed.themeId) ? parsed.themeId : 'classic',
       languageId:
         parsed.languageId === 'zh-CN' ||
@@ -217,10 +216,6 @@ const readWindowState = (): SavedWindowState => {
     };
   }
 };
-
-function isFontSizeScale(value: unknown): value is FontSizeScale {
-  return value === 1 || value === 1.15 || value === 1.25 || value === 1.5;
-}
 
 const clampToVisibleDisplay = (bounds: Rectangle): Rectangle => {
   const { workArea } = screen.getDisplayMatching(bounds);
@@ -817,7 +812,7 @@ const parseRestoredPreferences = (bytes: Buffer): RestoredPreferences => {
     alwaysOnTop: value.alwaysOnTop,
     closeToTray: value.closeToTray,
     launchAtStartup: value.launchAtStartup,
-    fontSizeScale: parseFontSizeScale(value.fontSizeScale),
+    fontSizeScale: normalizeStoredFontSizeScale(value.fontSizeScale),
     themeId: parseThemeId(value.themeId),
     languageId: parseLanguageId(value.languageId),
   };

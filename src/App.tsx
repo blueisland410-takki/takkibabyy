@@ -35,12 +35,6 @@ import './index.css';
 
 type Editor = { kind: 'task'; task?: Task } | { kind: 'event'; event?: Event };
 type ViewMode = 'day' | 'week' | 'planner' | 'settings';
-const FONT_SIZE_OPTIONS: Array<{ value: FontSizeScale; label: string }> = [
-  { value: 1, label: '100%' },
-  { value: 1.15, label: '115%' },
-  { value: 1.25, label: '125%' },
-  { value: 1.5, label: '150%' },
-];
 const weekdays = [0, 1, 2, 3, 4, 5, 6];
 
 const localDateKey = (date: Date) => {
@@ -553,6 +547,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [fontSizeScale, setFontSizeScale] = useState<FontSizeScale>(1);
   const [fontSizeError, setFontSizeError] = useState('');
+  const fontSizeChangeSequence = useRef(0);
   const [themeId, setThemeId] = useState<ThemeId>(
     () => window.dayByDay.initialTheme,
   );
@@ -703,12 +698,19 @@ export function App() {
   }, []);
 
   const updateFontSizeScale = async (scale: FontSizeScale) => {
+    const sequence = ++fontSizeChangeSequence.current;
+    const previousScale = fontSizeScale;
+    setFontSizeScale(scale);
     setFontSizeError('');
     try {
       const savedScale = await window.dayByDay.setFontSizeScale(scale);
-      setFontSizeScale(savedScale);
+      if (sequence === fontSizeChangeSequence.current)
+        setFontSizeScale(savedScale);
     } catch (error) {
-      setFontSizeError(getErrorMessage(error));
+      if (sequence === fontSizeChangeSequence.current) {
+        setFontSizeScale(previousScale);
+        setFontSizeError(getErrorMessage(error));
+      }
     }
   };
 
@@ -1207,29 +1209,44 @@ export function App() {
                   <p>{t('调整全应用文字大小，设置会保存在这台电脑上。')}</p>
                 </div>
               </div>
-              <div
-                aria-label={t('字体大小')}
-                className="font-size-options"
-                role="group"
-              >
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <button
-                    aria-pressed={fontSizeScale === option.value}
-                    className={
-                      fontSizeScale === option.value ? 'is-active' : ''
-                    }
-                    key={option.value}
-                    onClick={() => void updateFontSizeScale(option.value)}
-                    type="button"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="font-size-control">
+                <output
+                  aria-live="polite"
+                  className="font-size-value"
+                  htmlFor="font-size-slider"
+                >
+                  {t('Font size')} {Math.round(fontSizeScale * 100)}%
+                </output>
+                <button
+                  className="reset-font-size-button"
+                  disabled={fontSizeScale === 1}
+                  onClick={() => void updateFontSizeScale(1)}
+                  type="button"
+                >
+                  {t('Reset')}
+                </button>
+              </div>
+              <input
+                aria-label={t('Font size')}
+                className="font-size-slider"
+                id="font-size-slider"
+                max={130}
+                min={80}
+                onChange={(event) =>
+                  void updateFontSizeScale(
+                    (Number(event.currentTarget.value) / 100) as FontSizeScale,
+                  )
+                }
+                step={5}
+                type="range"
+                value={Math.round(fontSizeScale * 100)}
+              />
+              <div aria-hidden="true" className="font-size-range-labels">
+                <span>80%</span>
+                <span>130%</span>
               </div>
               <p className="settings-help">
-                {t(
-                  '100% 为默认大小；115%、125% 和 150% 可按阅读习惯选择。文字变大后，内容区域仍可滚动。',
-                )}
+                {t('拖动滑块调整文字大小，字体会立即应用并自动保存。')}
               </p>
               {(window.innerWidth < 440 || window.innerHeight < 680) && (
                 <p className="settings-notice" role="status">

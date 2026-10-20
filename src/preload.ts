@@ -137,9 +137,10 @@ contextBridge.exposeInMainWorld('dayByDay', {
   getFontSizeScale: (): Promise<FontSizeScale> =>
     ipcRenderer.invoke('settings:get-font-size-scale'),
   setFontSizeScale: (scale: FontSizeScale): Promise<FontSizeScale> => {
-    if (![1, 1.15, 1.25, 1.5].includes(scale))
-      throw new Error('字体大小选项无效。');
-    return ipcRenderer.invoke('settings:set-font-size-scale', scale);
+    return ipcRenderer.invoke(
+      'settings:set-font-size-scale',
+      parseFontSizeScale(scale),
+    );
   },
   setTheme: (themeId: ThemeId): Promise<ThemeId> =>
     ipcRenderer.invoke('settings:set-theme', parseThemeId(themeId)),

@@ -1,5 +1,5 @@
 {
-  "100% 为默认大小；115%、125% 和 150% 可按阅读习惯选择。文字变大后，内容区域仍可滚动。": "100% 為預設大小；115%、125% 和 150% 可按閱讀習慣選擇。文字變大後，內容區域仍可滾動。",
+  "拖动滑块调整文字大小，字体会立即应用并自动保存。": "拖動滑桿調整文字大小，字體會立即套用並自動儲存。",
   "Always on Top": "Always on Top",
   "App Language": "App Language",
   "Appearance": "Appearance",
@@ -9,6 +9,7 @@
   "Day": "Day",
   "Dusty Rose": "Dusty Rose",
   "Font size": "Font size",
+  "Reset": "重設",
   "GB18030 / 常见简体中文 Windows CSV": "GB18030 / 常見簡體中文 Windows CSV",
   "Import document · C 阶段": "Import document · C 階段",
   "Import timetable": "Import timetable",

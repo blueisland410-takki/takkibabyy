@@ -1,5 +1,5 @@
 {
-  "100% 为默认大小；115%、125% 和 150% 可按阅读习惯选择。文字变大后，内容区域仍可滚动。": "100% is the default. Choose 115%, 125%, or 150% for comfort. Content remains scrollable at larger sizes.",
+  "拖动滑块调整文字大小，字体会立即应用并自动保存。": "Drag the slider to change text size. The change applies immediately and saves automatically.",
   "Always on Top": "Always on top",
   "App Language": "App language",
   "Appearance": "Appearance",
@@ -9,6 +9,7 @@
   "Day": "Day",
   "Dusty Rose": "Dusty Rose",
   "Font size": "Font size",
+  "Reset": "Reset",
   "GB18030 / 常见简体中文 Windows CSV": "GB18030 / common Simplified Chinese Windows CSV",
   "Import document · C 阶段": "Import document · Phase C",
   "Import timetable": "Import timetable",

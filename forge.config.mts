@@ -15,7 +15,7 @@ const config: ForgeConfig = {
     // the existing %APPDATA%\DayByDay user-data location.
     name: 'Daybyday',
     executableName: 'Daybyday',
-    icon: path.resolve('resources/daybyday-tray.ico'),
+    icon: path.resolve('resources/icon.ico'),
     asar: true,
     // The Vite plugin bundles dependencies by default. Ship the native SQLite
     // package beside the OCR resources and load it from this fixed path.
@@ -41,7 +41,7 @@ const config: ForgeConfig = {
       title: 'Daybyday',
       exe: 'Daybyday.exe',
       setupExe: 'Daybyday-1.0.0-Setup.exe',
-      setupIcon: path.resolve('resources/daybyday-tray.ico'),
+      setupIcon: path.resolve('resources/icon.ico'),
       // electron-winstaller's preliminary rcedit step cannot commit edits to
       // its bundled Squirrel.exe on this Windows build. Keep the product icon
       // on the app and Setup.exe, and leave Update.exe's own icon untouched.
