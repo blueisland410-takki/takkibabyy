@@ -3,6 +3,7 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
+import NativeDmgMaker from './native-dmg-maker.mts';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import AutoUnpackNativesPlugin from '@electron-forge/plugin-auto-unpack-natives';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -15,15 +16,37 @@ const config: ForgeConfig = {
     // the existing %APPDATA%\DayByDay user-data location.
     name: 'Daybyday',
     executableName: 'Daybyday',
-    icon: path.resolve('resources/icon.ico'),
+    icon: path.resolve(
+      process.platform === 'darwin'
+        ? 'resources/icon.icns'
+        : process.platform === 'win32'
+          ? 'resources/icon.ico'
+          : 'resources/icon.png',
+    ),
     asar: true,
     // The Vite plugin bundles dependencies by default. Ship the native SQLite
     // package beside the OCR resources and load it from this fixed path.
     extraResource: [
       path.resolve('resources/ocr'),
-      path.resolve('resources/better-sqlite3'),
-      path.resolve('resources/daybyday-tray.ico'),
-      path.resolve('resources/daybyday-desktop-window.ps1'),
+      path.resolve(
+        '.package-temp/platform-resources',
+        `${process.platform}-${process.arch}`,
+        'better-sqlite3',
+      ),
+      ...(process.platform === 'darwin'
+        ? [
+            path.resolve('resources/daybyday-trayTemplate.png'),
+            path.resolve('resources/daybyday-trayTemplate@2x.png'),
+          ]
+        : [
+            path.resolve(
+              'resources',
+              process.platform === 'win32' ? 'daybyday-tray.ico' : 'icon.png',
+            ),
+          ]),
+      ...(process.platform === 'win32'
+        ? [path.resolve('resources/daybyday-desktop-window.ps1')]
+        : []),
     ],
     download: { cacheRoot: path.resolve('.electron-cache') },
     tmpdir: path.resolve('.package-temp'),
@@ -50,6 +73,7 @@ const config: ForgeConfig = {
       noMsi: true,
     }),
     new MakerZIP({}, ['darwin']),
+    new NativeDmgMaker(),
     new MakerRpm({}),
     new MakerDeb({}),
   ],

@@ -72,6 +72,23 @@ test('macOS ICNS has a valid container and all standard Retina image sizes', () 
     assert.ok(foundSizes.includes(size));
 });
 
+test('macOS menu bar tray has transparent 1x and Retina Template PNGs', () => {
+  const standard = fs.readFileSync(
+    path.join(resourcesDirectory, 'daybyday-trayTemplate.png'),
+  );
+  const retina = fs.readFileSync(
+    path.join(resourcesDirectory, 'daybyday-trayTemplate@2x.png'),
+  );
+  assert.deepEqual(readPngSize(standard), { width: 16, height: 16 });
+  assert.deepEqual(readPngSize(retina), { width: 32, height: 32 });
+  assert.equal(standard[25], 6);
+  assert.equal(retina[25], 6);
+  assert.match(
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'main.ts'), 'utf8'),
+    /icon\.setTemplateImage\(true\)/,
+  );
+});
+
 test('Settings uses a live 80-to-130 percent slider and reset button', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'App.tsx'),

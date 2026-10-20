@@ -91,6 +91,8 @@ const MIN_HEIGHT = 420;
 const STATE_FILE = 'window-state.json';
 const OCR_CORE_FILE = 'tesseract-core-lstm.wasm.js';
 const TRAY_ICON_FILE = 'daybyday-tray.ico';
+const MAC_TRAY_ICON_FILE = 'daybyday-trayTemplate.png';
+const LINUX_TRAY_ICON_FILE = 'icon.png';
 const DESKTOP_WINDOW_SCRIPT = 'daybyday-desktop-window.ps1';
 
 protocol.registerSchemesAsPrivileged([
@@ -675,10 +677,17 @@ const keepWindowVisible = () => {
   saveWindowState();
 };
 
-const getTrayIconPath = () =>
-  app.isPackaged
-    ? path.join(process.resourcesPath, TRAY_ICON_FILE)
-    : path.resolve(__dirname, '../../resources', TRAY_ICON_FILE);
+const getTrayIconPath = () => {
+  const iconFile =
+    process.platform === 'darwin'
+      ? MAC_TRAY_ICON_FILE
+      : process.platform === 'win32'
+        ? TRAY_ICON_FILE
+        : LINUX_TRAY_ICON_FILE;
+  return app.isPackaged
+    ? path.join(process.resourcesPath, iconFile)
+    : path.resolve(__dirname, '../../resources', iconFile);
+};
 
 const getSquirrelLauncherOptions = (openAtLogin: boolean) =>
   getSquirrelLoginItemOptions(process.execPath, openAtLogin);
@@ -691,6 +700,13 @@ const isWindowsStartupAvailable = () => {
     return false;
   }
 };
+
+const getStartupPlatform = (): DesktopSettings['startupPlatform'] =>
+  process.platform === 'win32'
+    ? 'windows'
+    : process.platform === 'darwin'
+      ? 'macos'
+      : 'unsupported';
 
 const readWindowsStartupEnabled = () => {
   if (!isWindowsStartupAvailable()) return false;
@@ -717,6 +733,7 @@ const getDesktopSettings = (): DesktopSettings => {
     closeToTray: currentCloseToTray,
     launchAtStartup: currentLaunchAtStartup,
     startupAvailable,
+    startupPlatform: getStartupPlatform(),
   };
 };
 
@@ -783,11 +800,40 @@ const createTray = () => {
       `The Daybyday tray icon could not be loaded: ${getTrayIconPath()}`,
     );
   }
+  if (process.platform === 'darwin') icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip('Daybyday');
   refreshTrayMenu();
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
+};
+
+const installMacApplicationMenu = () => {
+  if (process.platform !== 'darwin') return;
+  app.setAboutPanelOptions({
+    applicationName: 'Daybyday',
+    applicationVersion: app.getVersion(),
+  });
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Daybyday',
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      { role: 'editMenu' },
+      { role: 'windowMenu' },
+    ]),
+  );
 };
 
 const quitApplication = () => {
@@ -1894,7 +1940,9 @@ const registerWindowControls = () => {
         throw new Error(
           translateForLanguage(
             currentLanguageId,
-            '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
+            process.platform === 'darwin'
+              ? 'macOS 登录启动需要签名与公证；当前未签名测试版本暂不开放。'
+              : '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
           ),
         );
       }
@@ -2234,6 +2282,7 @@ app.whenReady().then(() => {
     return;
   }
   registerOcrProtocol();
+  installMacApplicationMenu();
   registerWindowControls();
   createWindow();
   try {

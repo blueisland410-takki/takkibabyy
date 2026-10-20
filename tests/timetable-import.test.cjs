@@ -449,19 +449,41 @@ test('synthetic timetable image is a valid independent PNG and bundled OCR asset
   );
 });
 
-test('the packaged Windows SQLite runtime opens an in-memory database', () => {
-  const sqliteRuntime = require(
-    path.join(__dirname, '..', 'resources', 'better-sqlite3'),
-  );
-  const packagedDatabase = new sqliteRuntime(':memory:');
-  try {
-    assert.deepEqual(packagedDatabase.prepare('SELECT 1 AS value').get(), {
-      value: 1,
-    });
-  } finally {
-    packagedDatabase.close();
-  }
-});
+const stagedSqliteRuntime = path.join(
+  __dirname,
+  '..',
+  '.package-temp',
+  'platform-resources',
+  `${process.platform}-${process.arch}`,
+  'better-sqlite3',
+);
+const fallbackWindowsSqliteRuntime = path.join(
+  __dirname,
+  '..',
+  'resources',
+  'better-sqlite3',
+);
+const sqliteRuntimePath = fs.existsSync(stagedSqliteRuntime)
+  ? stagedSqliteRuntime
+  : process.platform === 'win32' && process.arch === 'x64'
+    ? fallbackWindowsSqliteRuntime
+    : undefined;
+
+test(
+  'the staged platform SQLite runtime opens an in-memory database',
+  { skip: !sqliteRuntimePath },
+  () => {
+    const sqliteRuntime = require(sqliteRuntimePath);
+    const packagedDatabase = new sqliteRuntime(':memory:');
+    try {
+      assert.deepEqual(packagedDatabase.prepare('SELECT 1 AS value').get(), {
+        value: 1,
+      });
+    } finally {
+      packagedDatabase.close();
+    }
+  },
+);
 
 test(
   'offline Tesseract.js recognizes the synthetic Chinese timetable and returns text coordinates',

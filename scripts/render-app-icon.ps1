@@ -8,7 +8,9 @@ $targetFiles = @(
   (Join-Path $resourceDirectory 'icon.png'),
   (Join-Path $resourceDirectory 'icon.ico'),
   (Join-Path $resourceDirectory 'icon.icns'),
-  (Join-Path $resourceDirectory 'daybyday-tray.ico')
+  (Join-Path $resourceDirectory 'daybyday-tray.ico'),
+  (Join-Path $resourceDirectory 'daybyday-trayTemplate.png'),
+  (Join-Path $resourceDirectory 'daybyday-trayTemplate@2x.png')
 )
 if (-not (Test-Path -LiteralPath $svgPath)) { throw 'resources/icon.svg is missing.' }
 
@@ -37,6 +39,10 @@ $letterBrush = [System.Windows.Media.SolidColorBrush]::new(
   )
 )
 foreach ($brush in @($baseBrush, $creamBrush, $letterBrush)) { $brush.Freeze() }
+$templateBrush = [System.Windows.Media.SolidColorBrush]::new(
+  [System.Windows.Media.Colors]::Black
+)
+$templateBrush.Freeze()
 
 function New-IconPngBytes([int] $size) {
   $drawingGroup = [System.Windows.Media.DrawingGroup]::new()
@@ -77,6 +83,36 @@ function New-IconPngBytes([int] $size) {
 
 function Write-PngIcon([int] $size, [string] $path) {
   [IO.File]::WriteAllBytes($path, (New-IconPngBytes $size))
+}
+
+function New-TemplatePngBytes([int] $size, [int] $dpi) {
+  $visual = [System.Windows.Media.DrawingVisual]::new()
+  $context = $visual.RenderOpen()
+  [void] $context.PushTransform(
+    [System.Windows.Media.ScaleTransform]::new($size / 1024, $size / 1024)
+  )
+  $context.DrawGeometry($templateBrush, $null, $letterGeometry)
+  $context.Close()
+
+  $bitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new(
+    $size,
+    $size,
+    $dpi,
+    $dpi,
+    [System.Windows.Media.PixelFormats]::Pbgra32
+  )
+  $bitmap.Render($visual)
+  $encoder = [System.Windows.Media.Imaging.PngBitmapEncoder]::new()
+  [void] $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+  $stream = [IO.MemoryStream]::new()
+  try {
+    $encoder.Save($stream)
+    return ,([byte[]] $stream.ToArray())
+  } finally { $stream.Dispose() }
+}
+
+function Write-TemplatePng([int] $size, [int] $dpi, [string] $path) {
+  [IO.File]::WriteAllBytes($path, (New-TemplatePngBytes $size $dpi))
 }
 
 function ConvertTo-BigEndianLength([int] $value) {
@@ -147,6 +183,8 @@ Write-PngIcon 1024 (Join-Path $resourceDirectory 'icon.png')
 Write-IconContainer (Join-Path $resourceDirectory 'icon.ico') 'ico' @(16, 24, 32, 48, 64, 128, 256)
 Write-IconContainer (Join-Path $resourceDirectory 'daybyday-tray.ico') 'ico' @(16, 24, 32, 48, 64, 128, 256)
 Write-IconContainer (Join-Path $resourceDirectory 'icon.icns') 'icns' @(16, 32, 64, 128, 256, 512, 1024)
+Write-TemplatePng 16 72 (Join-Path $resourceDirectory 'daybyday-trayTemplate.png')
+Write-TemplatePng 32 144 (Join-Path $resourceDirectory 'daybyday-trayTemplate@2x.png')
 
 foreach ($target in $targetFiles) {
   if (-not (Test-Path -LiteralPath $target)) { throw "Icon output missing: $target" }

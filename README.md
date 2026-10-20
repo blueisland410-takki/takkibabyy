@@ -1,6 +1,6 @@
 # Daybyday
 
-DayByDay 是一款 Windows 桌面日程助手。当前版本包含可拖动、可缩放的悬浮窗、本地每日待办和临时日程，以及按教学周重复计算的学期课程和周视图。
+Daybyday 是一款面向 Windows 与 macOS 的跨平台本地日程助手。Windows 版本包含可拖动、可缩放的悬浮窗、本地每日待办和临时日程，以及按教学周重复计算的学期课程和周视图；macOS 构建状态及尚未实机验证的项目见 Phase 6.1D。
 
 ## 启动
 
@@ -102,7 +102,7 @@ npm start
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-app-icon.ps1
 ```
 
-当前只更新了 Windows 图标引用并提供 macOS ICNS 资源；macOS 应用打包和安装尚未在本检查点实现或验证。
+Forge 在 Windows 使用 ICO 应用图标，在 macOS 使用 ICNS。macOS 菜单栏托盘使用随 SVG 主图标生成的黑色透明 Template PNG（16px 与 32px Retina）；Windows 继续使用 ICO。重新绘制 SVG 后，同一脚本会更新这些图标资源。
 
 本检查点的 Windows Forge package 和 Squirrel make 均成功；已从 `Daybyday.exe` 与 `Daybyday-1.0.0-Setup.exe` 提取并检查嵌入图标，32×32 图像的上下背景与 D 字颜色符合 SVG，托盘 ICO 也进入打包资源。安装器仍未签名。`npm start` 没有显示窗口，故滑块的实际鼠标操作、窗口重启后的界面状态仍需在 Electron 可启动的环境中手动验证。
 
@@ -134,6 +134,28 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-w
 桌面层挂接会改变窗口的 Win32 父子关系。微软文档指出，跨进程 `SetParent` 在 Windows 10 1703 及之后可能重置子窗口所属进程的 DPI 感知；Electron 官方 BrowserWindow API 没有将普通 BrowserWindow 直接设置为 Explorer 桌面子窗口的公开接口。因此此模式明确标记为实验功能，可能影响高 DPI 缩放；若布局异常，请切回 Floating Window 并重启应用。[Microsoft SetParent 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Electron BrowserWindow 文档](https://www.electronjs.org/docs/latest/api/browser-window)。目前的环境中 Electron 44.9.0 未能显示应用窗口，所以真实 BrowserWindow 挂接、运行时自动恢复和 DPI 行为尚未完成验收。用户确认通过的是独立 WinForms 探针；这不代表 Explorer 重启、多显示器、Windows 10/11 和高 DPI 均已验证。
 
 本检查点 Forge package 成功，输出目录中包含桌面辅助脚本。Squirrel `make` 的应用打包步骤成功，但生成安装器时被当前受限环境拒绝访问 `C:\Users\lan\AppData\Roaming\NuGet`，因此本检查点没有产出新的 Setup.exe；也没有尝试修改该用户目录权限。
+
+### macOS 构建与平台边界（Phase 6.1D）
+
+Forge 保留现有 Windows Squirrel 配置，并增加 macOS ZIP 与原生 DMG maker。DMG 用 macOS 系统自带 `ditto` 复制 App bundle，再由 `hdiutil` 创建压缩镜像，包含 `/Applications` 拖放快捷方式；不使用第三方 DMG/ICNS 解析器。DMG 必须在 macOS runner 上构建；本项目的 `.github/workflows/build.yml` 分别使用 Windows x64、macOS Intel x64 和 Apple Silicon arm64 runner，运行依赖安装、lint、TypeScript、自动化测试、Electron 原生模块重建和安装包构建，产物保存为 Actions Artifacts，不会创建 Release 或上传用户数据。此仓库当前没有 Git remote，因此工作流文件尚未在 GitHub 上实际运行。
+
+在匹配目标架构的 Mac 上可运行：
+
+```sh
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run rebuild:native
+npm run prepare:sqlite -- --platform=darwin --arch=arm64
+npm run make -- --platform=darwin --arch=arm64
+```
+
+Intel Mac 将最后两条命令中的 `arm64` 改为 `x64`。`npm run make` 会再次为当前主机架构准备 SQLite 资源；本地构建应在与目标架构匹配的 Mac 上执行。macOS 打包使用 `resources/icon.icns`，SQLite 从已重建的 `better-sqlite3` 生成单架构资源，不会把 Windows `.node` 二进制放进 Mac 应用。Windows Squirrel 包继续使用 `resources/icon.ico` 和 Windows x64 SQLite。应用安装与用户数据目录分离，保留现有 `productName: DayByDay` 和 Windows `%APPDATA%\DayByDay` 标识；macOS 用户数据由 Electron 放在其系统 userData 目录（默认通常为 `~/Library/Application Support/DayByDay`）。没有配置 Apple Developer 签名或公证，DMG 将是未签名测试包，首次打开可能需要用户在 macOS 隐私与安全设置中明确允许；公开分发前需要 Developer ID 签名和 notarization。
+
+macOS 菜单栏托盘使用 Template PNG，以支持浅色和深色菜单栏；系统应用菜单提供 About、Hide、Services、Window 和 Quit 等原生角色。Floating Window 与 Always on Top 由 Electron BrowserWindow 支持。**Desktop Widget 在 macOS 不可用**：Electron 的 macOS `desktop` 窗口类型不接收鼠标和键盘事件，不能满足可交互便签需求；当前会明确显示不支持并回退到普通窗口，不会伪装成取消置顶。实现可交互桌面层需要额外的原生 AppKit 窗口桥接和跨 macOS 版本验收，本阶段未加入。开机登录项在未签名/公证的测试版中关闭；Electron 官方说明 macOS 登录项在未签名且未公证时可能静默失败，因此待正式签名构建后再验证开放。
+
+当前 Windows 本机用缓存 Electron ZIP 成功完成 Forge package，并确认包内只有 `win32-x64.node` 与 Windows 托盘/桌面资源；本轮 Squirrel maker 在访问 `C:\Users\lan\AppData\Roaming\NuGet` 时被系统拒绝，因此没有生成新的 Setup.exe。Mac 无法在这台 Windows 电脑上运行，DMG、Mac SQLite Electron 加载、Dock、菜单栏、Retina、多显示器、Mac 安装/卸载和签名公证均**尚未验证**。GitHub Actions 工作流也尚未运行。此前记录的 Electron 44.9.0 在本机 Windows 11 build 26200 启动前崩溃问题仍然存在。
 
 ## 手机教务课表结构预览（Phase 5.2 当前完成范围）
 
@@ -188,7 +210,7 @@ npm test
 npm run make -- --platform=win32 --arch=x64
 ```
 
-自动化测试对系统临时目录中的独立数据库执行，会在测试结束后清理；不会访问正式用户数据库。`npm run package` 只生成打包目录；`npm run make -- --platform=win32 --arch=x64` 才会生成 Windows 安装器。
+自动化测试由跨平台 Node 脚本运行，对系统临时目录中的独立数据库执行并清理；不会访问正式用户数据库。`npm run package` 只生成打包目录；`npm run make -- --platform=win32 --arch=x64` 才会生成 Windows 安装器。打包脚本按平台/架构将 SQLite 原生文件暂存到忽略的 `.package-temp/platform-resources/`，不修改源目录资源或 SQLite 用户数据库。CI 会使用 `@electron/rebuild` 针对当前 Electron 版本重建原生模块，然后在 Electron Node runtime 中执行 SQLite 内存数据库冒烟检查。
 
 若打包时在 `Copying files` 步骤出现网络 `fetch failed`，而项目 `.electron-cache` 内已有匹配版本的 Electron ZIP，可在当前 PowerShell 窗口指定本地 ZIP 目录后重试：
 
@@ -203,4 +225,4 @@ npm run make -- --platform=win32 --arch=x64
 
 Electron 窗口使用 `contextIsolation: true`、`nodeIntegration: false` 和渲染进程沙箱。React 通过 preload 中逐项列出的 API 请求主进程访问数据库；主进程会再次检查 IPC 来源和参数，页面不能运行 SQL。
 
-SQLite 使用 `better-sqlite3` 随包提供的 Windows x64 N-API 预编译模块。Vite 将原生模块留在主进程包外，避免从生成目录寻找 `.node` 文件。课程截图通过本地 Tesseract.js 和受限白名单资源协议处理；没有云端 OCR、云同步或账号系统。
+SQLite 使用随目标平台/架构构建的 `better-sqlite3` 原生模块。Vite 将原生模块留在主进程包外，避免从生成目录寻找 `.node` 文件。课程截图通过本地 Tesseract.js 和受限白名单资源协议处理；没有云端 OCR、云同步或账号系统。

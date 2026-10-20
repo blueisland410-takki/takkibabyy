@@ -1,0 +1,73 @@
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            runner: windows-latest
+            platform: win32
+            arch: x64
+          - label: macOS Intel x64
+            runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - label: macOS Apple Silicon arm64
+            runner: macos-15
+            platform: darwin
+            arch: arm64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Automated tests
+        run: npm test
+
+      - name: Rebuild native SQLite module for Electron
+        run: npm run rebuild:native -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Stage platform SQLite binary
+        run: npm run prepare:sqlite -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Verify SQLite inside Electron runtime
+        run: npm run test:electron-sqlite
+
+      - name: Build installer artifacts
+        run: npm run make -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Save build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Daybyday-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/**/*
+          if-no-files-found: error
+          retention-days: 14

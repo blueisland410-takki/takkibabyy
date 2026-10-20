@@ -105,6 +105,7 @@ export type DesktopSettings = {
   closeToTray: boolean;
   launchAtStartup: boolean;
   startupAvailable: boolean;
+  startupPlatform: 'windows' | 'macos' | 'unsupported';
 };
 
 export type BackupOperationResult = {

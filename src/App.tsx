@@ -570,6 +570,9 @@ export function App() {
   const [closeToTray, setCloseToTray] = useState(false);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [startupAvailable, setStartupAvailable] = useState(false);
+  const [startupPlatform, setStartupPlatform] = useState<
+    'windows' | 'macos' | 'unsupported'
+  >('windows');
   const [desktopSettingsLoaded, setDesktopSettingsLoaded] = useState(false);
   const [desktopSettingsError, setDesktopSettingsError] = useState('');
   const [startupSaving, setStartupSaving] = useState(false);
@@ -773,6 +776,7 @@ export function App() {
           setCloseToTray(desktopSettings.closeToTray);
           setLaunchAtStartup(desktopSettings.launchAtStartup);
           setStartupAvailable(desktopSettings.startupAvailable);
+          setStartupPlatform(desktopSettings.startupPlatform);
           setDesktopSettingsLoaded(true);
           applyWindowModeState(modeState);
           setDesktopSettingsError('');
@@ -849,6 +853,7 @@ export function App() {
         setCloseToTray(settings.closeToTray);
         setLaunchAtStartup(settings.launchAtStartup);
         setStartupAvailable(settings.startupAvailable);
+        setStartupPlatform(settings.startupPlatform);
         setDesktopSettingsLoaded(true);
       })
       .catch((error: unknown) => {
@@ -931,6 +936,7 @@ export function App() {
         await window.dayByDay.setLaunchAtStartup(!launchAtStartup);
       setLaunchAtStartup(settings.launchAtStartup);
       setStartupAvailable(settings.startupAvailable);
+      setStartupPlatform(settings.startupPlatform);
     } catch (error) {
       setDesktopSettingsError(getErrorMessage(error));
     } finally {
@@ -1532,12 +1538,28 @@ export function App() {
               </div>
               <div className="desktop-setting-row">
                 <div>
-                  <span>{t('Launch at Windows startup')}</span>
+                  <span>
+                    {t(
+                      startupPlatform === 'macos'
+                        ? 'Launch at login'
+                        : startupPlatform === 'windows'
+                          ? 'Launch at Windows startup'
+                          : 'Launch at startup',
+                    )}
+                  </span>
                   <p className="settings-help">
                     {startupAvailable
-                      ? t('开机启动状态会直接向 Windows 查询。')
+                      ? t(
+                          startupPlatform === 'macos'
+                            ? 'macOS 登录启动状态由系统管理。'
+                            : '开机启动状态会直接向 Windows 查询。',
+                        )
                       : t(
-                          '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
+                          startupPlatform === 'macos'
+                            ? 'macOS 登录启动需要签名与公证；当前未签名测试版本暂不开放。'
+                            : startupPlatform === 'unsupported'
+                              ? '当前平台或应用版本暂不支持开机启动。'
+                              : '仅正式安装版支持开机启动；开发版本不会创建 Windows 启动项。',
                         )}
                   </p>
                 </div>
