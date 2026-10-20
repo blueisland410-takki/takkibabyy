@@ -549,6 +549,7 @@ export function App() {
   const [weekData, setWeekData] = useState<Record<string, DayData>>({});
   const [weekLoading, setWeekLoading] = useState(false);
   const [weekReload, setWeekReload] = useState(0);
+  const [plannerReload, setPlannerReload] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [fontSizeScale, setFontSizeScale] = useState<FontSizeScale>(1);
   const [fontSizeError, setFontSizeError] = useState('');
@@ -571,6 +572,11 @@ export function App() {
   const [desktopSettingsLoaded, setDesktopSettingsLoaded] = useState(false);
   const [desktopSettingsError, setDesktopSettingsError] = useState('');
   const [startupSaving, setStartupSaving] = useState(false);
+  const [dataOperation, setDataOperation] = useState<
+    'backup' | 'restore' | null
+  >(null);
+  const [dataMessage, setDataMessage] = useState('');
+  const [dataError, setDataError] = useState('');
   const [controlMessage, setControlMessage] = useState('');
   const [quickTitle, setQuickTitle] = useState('');
   const quickTaskInputRef = useRef<HTMLInputElement>(null);
@@ -606,6 +612,16 @@ export function App() {
   useEffect(() => {
     void loadDay(selectedDate, true);
   }, [loadDay, selectedDate]);
+
+  useEffect(
+    () =>
+      window.dayByDay.onDataRestored(() => {
+        void loadDay(selectedDate, false);
+        setWeekReload((version) => version + 1);
+        setPlannerReload((version) => version + 1);
+      }),
+    [loadDay, selectedDate],
+  );
 
   useEffect(() => {
     if (viewMode !== 'week') return;
@@ -710,6 +726,56 @@ export function App() {
         setThemeId(previousTheme);
         setThemeError(getErrorMessage(error));
       }
+    }
+  };
+
+  const createDataBackup = async () => {
+    setDataOperation('backup');
+    setDataMessage('');
+    setDataError('');
+    try {
+      const result = await window.dayByDay.backupData();
+      if (!result.cancelled && result.filePath)
+        setDataMessage(t('已创建备份：{{path}}', { path: result.filePath }));
+    } catch (error) {
+      setDataError(getErrorMessage(error));
+    } finally {
+      setDataOperation(null);
+    }
+  };
+
+  const restoreDataBackup = async () => {
+    setDataOperation('restore');
+    setDataMessage('');
+    setDataError('');
+    try {
+      const result = await window.dayByDay.restoreData();
+      if (result.restored && result.recoveryPath)
+        setDataMessage(
+          t('数据已恢复。恢复前安全备份位于：{{path}}', {
+            path: result.recoveryPath,
+          }),
+        );
+      if (result.restored) {
+        try {
+          const [desktopSettings, top] = await Promise.all([
+            window.dayByDay.getDesktopSettings(),
+            window.dayByDay.getAlwaysOnTop(),
+          ]);
+          setCloseToTray(desktopSettings.closeToTray);
+          setLaunchAtStartup(desktopSettings.launchAtStartup);
+          setStartupAvailable(desktopSettings.startupAvailable);
+          setDesktopSettingsLoaded(true);
+          setAlwaysOnTop(top);
+          setDesktopSettingsError('');
+        } catch (error) {
+          setDesktopSettingsError(getErrorMessage(error));
+        }
+      }
+    } catch (error) {
+      setDataError(getErrorMessage(error));
+    } finally {
+      setDataOperation(null);
     }
   };
 
@@ -1114,6 +1180,7 @@ export function App() {
         </nav>
         {viewMode === 'planner' ? (
           <SemesterPlanner
+            key={plannerReload}
             onCurrentSemesterChanged={() => {
               void loadDay(selectedDate, false);
               setWeekReload((version) => version + 1);
@@ -1283,6 +1350,54 @@ export function App() {
               {languageError && (
                 <p className="form-error" role="alert">
                   {translateSystemMessage(languageError)}
+                </p>
+              )}
+            </section>
+            <section
+              aria-labelledby="data-settings-heading"
+              className="settings-card data-settings-card"
+            >
+              <div className="settings-card-heading">
+                <div>
+                  <p className="settings-eyebrow">{t('Data')}</p>
+                  <h2 id="data-settings-heading">{t('Backup & Restore')}</h2>
+                  <p>
+                    {t(
+                      '备份包含本地数据库和应用偏好；不会包含原始课程表截图。',
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="backup-actions">
+                <button
+                  className="primary-button"
+                  disabled={dataOperation !== null}
+                  onClick={() => void createDataBackup()}
+                  type="button"
+                >
+                  {dataOperation === 'backup'
+                    ? t('正在处理…')
+                    : t('Backup Data')}
+                </button>
+                <button
+                  className="quiet-button"
+                  disabled={dataOperation !== null}
+                  onClick={() => void restoreDataBackup()}
+                  type="button"
+                >
+                  {dataOperation === 'restore'
+                    ? t('正在处理…')
+                    : t('Restore Data')}
+                </button>
+              </div>
+              {dataMessage && (
+                <p className="settings-success" role="status">
+                  {dataMessage}
+                </p>
+              )}
+              {dataError && (
+                <p className="form-error" role="alert">
+                  {translateSystemMessage(dataError)}
                 </p>
               )}
             </section>

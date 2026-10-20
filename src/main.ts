@@ -7,15 +7,38 @@ import {
   protocol,
   screen,
   Tray,
+  dialog,
   type BrowserWindowConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type Rectangle,
 } from 'electron';
 import fs from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { PlannerDatabase, type SqliteDatabaseConstructor } from './database';
+import { pipeline } from 'node:stream/promises';
+import {
+  CURRENT_SCHEMA_VERSION,
+  PlannerDatabase,
+  type SqliteDatabaseConstructor,
+} from './database';
+import {
+  encodeBackupHeader,
+  getBackupFixedPrefixLength,
+  getBackupHeaderLength,
+  MAX_BACKUP_PREFERENCES_BYTES,
+  parseBackupHeader,
+  type BackupFileMetadata,
+  type BackupRecordCounts,
+  type BackupPayloadLayout,
+} from './backupFormat';
+import {
+  hasDatabaseBundle,
+  moveDatabaseBundle,
+  removeDatabaseBundle,
+  restorePartialDatabaseBundle,
+} from './backupFiles';
 import { getThemeDefinition, isThemeId } from './theme';
 import {
   getSquirrelLoginItemOptions,
@@ -95,6 +118,8 @@ let plannerDatabase: PlannerDatabase | undefined;
 let boundsBeforeImportMode: Rectangle | undefined;
 let mainWindowReady = false;
 let isQuitting = false;
+let dataOperationInProgress = false;
+let quitAfterDataOperation = false;
 let pendingTrayAction: TrayAction | undefined;
 let currentFontSizeScale: FontSizeScale = 1;
 let currentThemeId: ThemeId = 'classic';
@@ -112,32 +137,35 @@ const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 const getStatePath = () => path.join(app.getPath('userData'), STATE_FILE);
+const getDatabasePath = () =>
+  path.join(app.getPath('userData'), 'daybyday.sqlite');
+
+const getSqliteDatabaseConstructor = (): SqliteDatabaseConstructor => {
+  const sqliteRequire = createRequire(
+    app.isPackaged
+      ? path.join(process.resourcesPath, 'daybyday-loader.cjs')
+      : __filename,
+  );
+  const sqlitePackagePath = app.isPackaged
+    ? path.join(process.resourcesPath, 'better-sqlite3')
+    : 'better-sqlite3';
+  return sqliteRequire(sqlitePackagePath) as SqliteDatabaseConstructor;
+};
 
 const getPlannerDatabase = () => {
   if (plannerDatabase) return plannerDatabase;
   try {
     const userDataPath = app.getPath('userData');
     fs.mkdirSync(userDataPath, { recursive: true });
-    const sqliteRequire = createRequire(
-      app.isPackaged
-        ? path.join(process.resourcesPath, 'daybyday-loader.cjs')
-        : __filename,
-    );
-    const sqlitePackagePath = app.isPackaged
-      ? path.join(process.resourcesPath, 'better-sqlite3')
-      : 'better-sqlite3';
-    const sqliteDatabaseConstructor = sqliteRequire(
-      sqlitePackagePath,
-    ) as SqliteDatabaseConstructor;
     plannerDatabase = new PlannerDatabase(
-      path.join(userDataPath, 'daybyday.sqlite'),
-      sqliteDatabaseConstructor,
+      getDatabasePath(),
+      getSqliteDatabaseConstructor(),
     );
     return plannerDatabase;
   } catch (error) {
     console.error(
       'Could not open the DayByDay database. Existing data was not cleared.',
-      error,
+      getErrorKind(error),
     );
     const detail = error instanceof Error ? error.message : '未知错误';
     throw new Error(
@@ -259,7 +287,10 @@ const saveWindowState = (): boolean => {
     fs.writeFileSync(getStatePath(), JSON.stringify(state, null, 2), 'utf8');
     return true;
   } catch (error) {
-    console.error('Could not save the DayByDay window settings.', error);
+    console.error(
+      'Could not save the DayByDay window settings.',
+      getErrorKind(error),
+    );
     return false;
   }
 };
@@ -480,6 +511,851 @@ const getTrustedWindow = (event: IpcMainInvokeEvent) => {
   return mainWindow;
 };
 
+type RestoredPreferences = SavedWindowState;
+
+type RestoreJournal = {
+  version: 1;
+  phase: 'prepared' | 'old-moved' | 'new-moved';
+  id: string;
+  rollbackDatabaseName: string;
+  stagedDatabaseName: string;
+  hadWindowState: boolean;
+  oldWindowStateBase64: string;
+  oldStartupEnabled: boolean;
+};
+
+type StagedBackup = {
+  metadata: BackupFileMetadata;
+  preferences: RestoredPreferences;
+  databasePath: string;
+  summary: BackupRecordCounts;
+};
+
+const RESTORE_JOURNAL_FILE = '.restore-journal.json';
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const sha256Buffer = (buffer: Buffer) =>
+  createHash('sha256').update(buffer).digest('hex');
+
+const getErrorKind = (error: unknown) =>
+  error instanceof Error ? error.name : 'UnknownError';
+
+const localDateStamp = (value: Date) =>
+  [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+
+const localTimeStamp = (value: Date) =>
+  `${localDateStamp(value)}-${String(value.getHours()).padStart(2, '0')}-${String(value.getMinutes()).padStart(2, '0')}-${String(value.getSeconds()).padStart(2, '0')}`;
+
+const sha256File = async (filePath: string) => {
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+};
+
+const getWindowStateBytes = () => {
+  if (!saveWindowState())
+    throw new Error('窗口和设置尚未保存，无法创建完整备份。');
+  return fs.readFileSync(getStatePath());
+};
+
+const writeFileAtomically = (filePath: string, bytes: Buffer) => {
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { recursive: true });
+  const id = randomUUID();
+  const temporaryPath = path.join(directory, `.daybyday-write-${id}.tmp`);
+  const previousPath = path.join(directory, `.daybyday-previous-${id}.tmp`);
+  let movedPrevious = false;
+  try {
+    fs.writeFileSync(temporaryPath, bytes, { flag: 'wx' });
+    const descriptor = fs.openSync(temporaryPath, 'r+');
+    try {
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    if (fs.existsSync(filePath)) {
+      fs.renameSync(filePath, previousPath);
+      movedPrevious = true;
+    }
+    fs.renameSync(temporaryPath, filePath);
+    if (movedPrevious) fs.unlinkSync(previousPath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+      if (movedPrevious && fs.existsSync(previousPath)) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        fs.renameSync(previousPath, filePath);
+      }
+    } catch (rollbackError) {
+      console.error(
+        'Could not roll back an atomic Daybyday file write.',
+        getErrorKind(rollbackError),
+      );
+    }
+    throw error;
+  }
+};
+
+const writeBackupFile = async (
+  destinationPath: string,
+  options: { allowInsideUserData?: boolean } = {},
+) => {
+  const resolvedDestination = path.resolve(destinationPath);
+  const resolvedUserData = path.resolve(app.getPath('userData'));
+  const insideUserData =
+    resolvedDestination.toLowerCase() === resolvedUserData.toLowerCase() ||
+    resolvedDestination
+      .toLowerCase()
+      .startsWith(`${resolvedUserData.toLowerCase()}${path.sep.toLowerCase()}`);
+  if (insideUserData && !options.allowInsideUserData)
+    throw new Error('为保护应用数据，请将备份保存到用户数据目录以外的位置。');
+
+  const sourceDatabase = getPlannerDatabase();
+  const preferencesBytes = getWindowStateBytes();
+  if (preferencesBytes.length > MAX_BACKUP_PREFERENCES_BYTES)
+    throw new Error('本机设置文件超过备份格式允许的大小。');
+
+  const userDataPath = app.getPath('userData');
+  const snapshotPath = path.join(
+    userDataPath,
+    `.daybyday-backup-snapshot-${randomUUID()}.sqlite`,
+  );
+  const destinationDirectory = path.dirname(destinationPath);
+  const temporaryPath = path.join(
+    destinationDirectory,
+    `.daybyday-backup-${randomUUID()}.tmp`,
+  );
+  const previousPath = `${destinationPath}.previous-${randomUUID()}`;
+  let movedPrevious = false;
+  let backupCommitted = false;
+  try {
+    await sourceDatabase.backupTo(snapshotPath);
+    const snapshotDatabase = new PlannerDatabase(
+      snapshotPath,
+      getSqliteDatabaseConstructor(),
+    );
+    let schemaVersion: number;
+    let counts: BackupRecordCounts;
+    try {
+      const integrity = snapshotDatabase.getIntegrityCheck();
+      if (
+        integrity.integrity.length !== 1 ||
+        integrity.integrity[0] !== 'ok' ||
+        integrity.foreignKeyViolations !== 0
+      )
+        throw new Error('数据库快照完整性检查未通过。');
+      schemaVersion = snapshotDatabase.getSchemaVersion();
+      counts = snapshotDatabase.getBackupRecordCounts();
+    } finally {
+      snapshotDatabase.close();
+    }
+
+    const databaseInfo = fs.statSync(snapshotPath);
+    const metadata: BackupFileMetadata = {
+      format: 'daybyday-backup',
+      formatVersion: 1,
+      appVersion: app.getVersion(),
+      createdAt: new Date().toISOString(),
+      database: {
+        byteLength: databaseInfo.size,
+        sha256: await sha256File(snapshotPath),
+        schemaVersion,
+        counts,
+      },
+      preferences: {
+        byteLength: preferencesBytes.length,
+        sha256: sha256Buffer(preferencesBytes),
+      },
+    };
+
+    fs.mkdirSync(destinationDirectory, { recursive: true });
+    fs.writeFileSync(temporaryPath, encodeBackupHeader(metadata), {
+      flag: 'wx',
+    });
+    await pipeline(
+      fs.createReadStream(snapshotPath),
+      fs.createWriteStream(temporaryPath, { flags: 'a' }),
+    );
+    await fs.promises.appendFile(temporaryPath, preferencesBytes);
+    const backupFile = await fs.promises.open(temporaryPath, 'r+');
+    try {
+      await backupFile.sync();
+    } finally {
+      await backupFile.close();
+    }
+
+    if (fs.existsSync(destinationPath)) {
+      if (fs.statSync(destinationPath).isDirectory())
+        throw new Error('备份保存位置必须是文件。');
+      fs.renameSync(destinationPath, previousPath);
+      movedPrevious = true;
+    }
+    try {
+      fs.renameSync(temporaryPath, destinationPath);
+      backupCommitted = true;
+    } catch (error) {
+      if (movedPrevious && fs.existsSync(previousPath)) {
+        try {
+          fs.renameSync(previousPath, destinationPath);
+          movedPrevious = false;
+        } catch (restoreError) {
+          console.error(
+            'Could not restore the previous Daybyday backup file.',
+            getErrorKind(restoreError),
+          );
+        }
+      }
+      throw error;
+    }
+    if (movedPrevious) {
+      try {
+        fs.unlinkSync(previousPath);
+        movedPrevious = false;
+      } catch (error) {
+        console.error(
+          'Could not remove the replaced Daybyday backup file.',
+          getErrorKind(error),
+        );
+      }
+    }
+  } finally {
+    for (const filePath of [
+      snapshotPath,
+      `${snapshotPath}-wal`,
+      `${snapshotPath}-shm`,
+      temporaryPath,
+    ]) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (error) {
+        console.error(
+          'Could not remove a temporary Daybyday backup file.',
+          getErrorKind(error),
+        );
+      }
+    }
+    if (backupCommitted && movedPrevious) {
+      try {
+        fs.unlinkSync(previousPath);
+      } catch (error) {
+        console.error(
+          'Could not remove the replaced Daybyday backup file.',
+          getErrorKind(error),
+        );
+      }
+    }
+  }
+};
+
+const readBackupHeaderFromFile = (filePath: string) => {
+  const descriptor = fs.openSync(filePath, 'r');
+  try {
+    const fileLength = fs.fstatSync(descriptor).size;
+    const fixedPrefix = Buffer.alloc(getBackupFixedPrefixLength());
+    const fixedBytes = fs.readSync(
+      descriptor,
+      fixedPrefix,
+      0,
+      fixedPrefix.length,
+      0,
+    );
+    if (fixedBytes !== fixedPrefix.length) throw new Error('备份文件不完整。');
+    const headerLength = getBackupHeaderLength(fixedPrefix);
+    const header = Buffer.alloc(headerLength);
+    const headerBytes = fs.readSync(descriptor, header, 0, header.length, 0);
+    if (headerBytes !== header.length) throw new Error('备份文件信息不完整。');
+    return parseBackupHeader(header, fileLength);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
+const parseRestoredPreferences = (bytes: Buffer): RestoredPreferences => {
+  if (bytes.length < 2 || bytes.length > MAX_BACKUP_PREFERENCES_BYTES)
+    throw new Error('备份中的偏好设置长度无效。');
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString('utf8')) as unknown;
+  } catch {
+    throw new Error('备份中的偏好设置无法读取。');
+  }
+  if (!isPlainRecord(value)) throw new Error('备份中的偏好设置无效。');
+  const width = value.width;
+  const height = value.height;
+  if (
+    !isFiniteNumber(width) ||
+    !isFiniteNumber(height) ||
+    width < MIN_WIDTH ||
+    width > 16384 ||
+    height < MIN_HEIGHT ||
+    height > 16384 ||
+    typeof value.alwaysOnTop !== 'boolean' ||
+    typeof value.closeToTray !== 'boolean' ||
+    typeof value.launchAtStartup !== 'boolean'
+  )
+    throw new Error('备份中的窗口偏好设置无效。');
+  const x = value.x;
+  const y = value.y;
+  if (
+    (x !== undefined && (!isFiniteNumber(x) || Math.abs(x) > 10000000)) ||
+    (y !== undefined && (!isFiniteNumber(y) || Math.abs(y) > 10000000)) ||
+    (x === undefined) !== (y === undefined)
+  )
+    throw new Error('备份中的窗口位置无效。');
+  return {
+    ...(x !== undefined && y !== undefined
+      ? { x: Math.round(x), y: Math.round(y) }
+      : {}),
+    width: Math.round(width),
+    height: Math.round(height),
+    alwaysOnTop: value.alwaysOnTop,
+    closeToTray: value.closeToTray,
+    launchAtStartup: value.launchAtStartup,
+    fontSizeScale: parseFontSizeScale(value.fontSizeScale),
+    themeId: parseThemeId(value.themeId),
+    languageId: parseLanguageId(value.languageId),
+  };
+};
+
+const readBackupPreferences = (
+  filePath: string,
+  layout: BackupPayloadLayout,
+) => {
+  const descriptor = fs.openSync(filePath, 'r');
+  try {
+    const bytes = Buffer.alloc(layout.metadata.preferences.byteLength);
+    const bytesRead = fs.readSync(
+      descriptor,
+      bytes,
+      0,
+      bytes.length,
+      layout.preferencesOffset,
+    );
+    if (bytesRead !== bytes.length) throw new Error('备份中的偏好设置不完整。');
+    if (sha256Buffer(bytes) !== layout.metadata.preferences.sha256)
+      throw new Error('备份中的偏好设置校验失败。');
+    return parseRestoredPreferences(bytes);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
+const restoreWindowStateBytes = (
+  hadWindowState: boolean,
+  bytes: Buffer | undefined,
+) => {
+  if (hadWindowState && bytes) writeFileAtomically(getStatePath(), bytes);
+  else if (fs.existsSync(getStatePath())) fs.unlinkSync(getStatePath());
+};
+
+const parseRestoreJournal = (value: unknown): RestoreJournal => {
+  if (
+    !isPlainRecord(value) ||
+    value.version !== 1 ||
+    (value.phase !== 'prepared' &&
+      value.phase !== 'old-moved' &&
+      value.phase !== 'new-moved') ||
+    typeof value.id !== 'string' ||
+    !/^[0-9a-f-]{36}$/.test(value.id) ||
+    value.rollbackDatabaseName !==
+      `.daybyday-restore-rollback-${value.id}.sqlite` ||
+    value.stagedDatabaseName !==
+      `.daybyday-restore-staging-${value.id}.sqlite` ||
+    typeof value.hadWindowState !== 'boolean' ||
+    typeof value.oldWindowStateBase64 !== 'string' ||
+    value.oldWindowStateBase64.length > 349528 ||
+    typeof value.oldStartupEnabled !== 'boolean'
+  )
+    throw new Error('恢复操作记录无效；为保护数据，数据库没有打开。');
+  if (value.hadWindowState) {
+    const oldStateBytes = Buffer.from(value.oldWindowStateBase64, 'base64');
+    if (oldStateBytes.toString('base64') !== value.oldWindowStateBase64)
+      throw new Error('恢复操作记录中的设置备份无效。');
+    parseRestoredPreferences(oldStateBytes);
+  } else if (value.oldWindowStateBase64 !== '') {
+    throw new Error('恢复操作记录中的设置备份无效。');
+  }
+  return value as unknown as RestoreJournal;
+};
+
+const recoverPendingRestore = () => {
+  const journalPath = path.join(app.getPath('userData'), RESTORE_JOURNAL_FILE);
+  if (!fs.existsSync(journalPath)) return;
+  const journal = parseRestoreJournal(
+    JSON.parse(fs.readFileSync(journalPath, 'utf8')) as unknown,
+  );
+  const userDataPath = app.getPath('userData');
+  const liveDatabasePath = getDatabasePath();
+  const rollbackPath = path.join(userDataPath, journal.rollbackDatabaseName);
+  const stagedPath = path.join(userDataPath, journal.stagedDatabaseName);
+  if (journal.phase === 'prepared') {
+    if (hasDatabaseBundle(rollbackPath))
+      restorePartialDatabaseBundle(rollbackPath, liveDatabasePath);
+  } else if (fs.existsSync(rollbackPath)) {
+    removeDatabaseBundle(liveDatabasePath);
+    restorePartialDatabaseBundle(rollbackPath, liveDatabasePath);
+  } else if (hasDatabaseBundle(rollbackPath)) {
+    // A prior recovery may have moved the old main file and been interrupted
+    // while returning its WAL/SHM sidecars. Finish the same idempotent merge.
+    restorePartialDatabaseBundle(rollbackPath, liveDatabasePath);
+  } else if (!fs.existsSync(liveDatabasePath)) {
+    throw new Error('恢复中断后找不到原数据库；原始文件没有被删除。');
+  }
+
+  const oldStateBytes = journal.oldWindowStateBase64
+    ? Buffer.from(journal.oldWindowStateBase64, 'base64')
+    : undefined;
+  restoreWindowStateBytes(journal.hadWindowState, oldStateBytes);
+  currentLaunchAtStartup = journal.oldStartupEnabled;
+  if (isWindowsStartupAvailable()) {
+    app.setLoginItemSettings({
+      ...getSquirrelLauncherOptions(journal.oldStartupEnabled),
+      enabled: true,
+    });
+  }
+  removeDatabaseBundle(stagedPath);
+  fs.unlinkSync(journalPath);
+};
+
+const stageBackup = async (
+  filePath: string,
+  id: string,
+): Promise<StagedBackup> => {
+  const layout = readBackupHeaderFromFile(filePath);
+  if (layout.metadata.database.schemaVersion > CURRENT_SCHEMA_VERSION)
+    throw new Error('此备份由更新版本的 Daybyday 创建，当前版本无法恢复。');
+  const userDataPath = app.getPath('userData');
+  const stagedDatabasePath = path.join(
+    userDataPath,
+    `.daybyday-restore-staging-${id}.sqlite`,
+  );
+  const databaseEnd =
+    layout.databaseOffset + layout.metadata.database.byteLength - 1;
+  try {
+    await pipeline(
+      fs.createReadStream(filePath, {
+        start: layout.databaseOffset,
+        end: databaseEnd,
+      }),
+      fs.createWriteStream(stagedDatabasePath, { flags: 'wx' }),
+    );
+    if (
+      (await sha256File(stagedDatabasePath)) !== layout.metadata.database.sha256
+    )
+      throw new Error('备份中的数据库校验失败。');
+    const preferences = readBackupPreferences(filePath, layout);
+    const SqliteDatabase = getSqliteDatabaseConstructor();
+    const rawDatabase = new SqliteDatabase(stagedDatabasePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      const actualVersion = rawDatabase.pragma('user_version', {
+        simple: true,
+      }) as number;
+      const integrity = rawDatabase.pragma('integrity_check') as Array<{
+        integrity_check: string;
+      }>;
+      const foreignKeys = rawDatabase.pragma('foreign_key_check') as unknown[];
+      if (actualVersion !== layout.metadata.database.schemaVersion)
+        throw new Error('备份数据库版本与备份信息不一致。');
+      if (
+        integrity.length !== 1 ||
+        integrity[0].integrity_check !== 'ok' ||
+        foreignKeys.length !== 0
+      )
+        throw new Error('备份数据库完整性检查未通过。');
+    } finally {
+      rawDatabase.close();
+    }
+
+    const migratedDatabase = new PlannerDatabase(
+      stagedDatabasePath,
+      SqliteDatabase,
+    );
+    let summary: BackupRecordCounts;
+    try {
+      const integrity = migratedDatabase.getIntegrityCheck();
+      if (
+        integrity.integrity.length !== 1 ||
+        integrity.integrity[0] !== 'ok' ||
+        integrity.foreignKeyViolations !== 0
+      )
+        throw new Error('备份迁移后的数据库完整性检查未通过。');
+      summary = migratedDatabase.getBackupRecordCounts();
+    } finally {
+      migratedDatabase.close();
+    }
+    return {
+      metadata: layout.metadata,
+      preferences,
+      databasePath: stagedDatabasePath,
+      summary,
+    };
+  } catch (error) {
+    removeDatabaseBundle(stagedDatabasePath);
+    throw error;
+  }
+};
+
+const formatRestoreSummary = (
+  language: LanguageId,
+  counts: BackupRecordCounts,
+) =>
+  translateForLanguage(
+    language,
+    '备份包含 {{tasks}} 项待办、{{events}} 项日程、{{semesters}} 个学期、{{courses}} 门课程和 {{courseExceptions}} 条调课记录。',
+  )
+    .replaceAll('{{tasks}}', String(counts.tasks))
+    .replaceAll('{{events}}', String(counts.events))
+    .replaceAll('{{semesters}}', String(counts.semesters))
+    .replaceAll('{{courses}}', String(counts.courses))
+    .replaceAll('{{courseExceptions}}', String(counts.courseExceptions));
+
+const formatBackupOrigin = (
+  language: LanguageId,
+  metadata: BackupFileMetadata,
+) =>
+  translateForLanguage(language, '备份版本 {{version}} · 创建时间 {{date}}')
+    .replaceAll('{{version}}', metadata.appVersion)
+    .replaceAll(
+      '{{date}}',
+      new Intl.DateTimeFormat(language, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(metadata.createdAt)),
+    );
+
+const createUserBackup = async (window: BrowserWindow) => {
+  const date = localDateStamp(new Date());
+  const saveResult = await dialog.showSaveDialog(window, {
+    title: translateForLanguage(currentLanguageId, 'Backup Data'),
+    defaultPath: path.join(
+      app.getPath('documents'),
+      `Daybyday-backup-${date}.ddb`,
+    ),
+    filters: [{ name: 'Daybyday backup', extensions: ['ddb'] }],
+  });
+  if (saveResult.canceled || !saveResult.filePath) return { cancelled: true };
+
+  try {
+    await writeBackupFile(saveResult.filePath);
+    return { cancelled: false, filePath: saveResult.filePath };
+  } catch (error) {
+    console.error(
+      'Could not create a Daybyday data backup.',
+      getErrorKind(error),
+    );
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '无法创建备份，请检查磁盘空间和文件权限后重试。',
+      ),
+    );
+  }
+};
+
+const applyStartupSetting = (enabled: boolean) => {
+  if (!isWindowsStartupAvailable()) return false;
+  app.setLoginItemSettings({
+    ...getSquirrelLauncherOptions(enabled),
+    enabled: true,
+  });
+  const actual = readWindowsStartupEnabled();
+  if (actual !== enabled)
+    throw new Error('Windows 开机启动状态与恢复设置不一致。');
+  return actual;
+};
+
+const restoreUserBackup = async (window: BrowserWindow) => {
+  const openResult = await dialog.showOpenDialog(window, {
+    title: translateForLanguage(currentLanguageId, 'Restore Data'),
+    properties: ['openFile'],
+    filters: [
+      { name: 'Daybyday backup', extensions: ['ddb'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (openResult.canceled || openResult.filePaths.length !== 1)
+    return { cancelled: true, restored: false };
+
+  const backupPath = openResult.filePaths[0];
+  const operationId = randomUUID();
+  let staged: StagedBackup | undefined;
+  try {
+    staged = await stageBackup(backupPath, operationId);
+  } catch (error) {
+    console.error(
+      'A selected Daybyday backup did not validate.',
+      getErrorKind(error),
+    );
+    removeDatabaseBundle(
+      path.join(
+        app.getPath('userData'),
+        `.daybyday-restore-staging-${operationId}.sqlite`,
+      ),
+    );
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '备份文件无法验证或数据库不兼容；当前数据没有更改。',
+      ),
+    );
+  }
+
+  let confirmation: Electron.MessageBoxReturnValue;
+  try {
+    confirmation = await dialog.showMessageBox(window, {
+      type: 'warning',
+      title: translateForLanguage(
+        currentLanguageId,
+        'Restore this Daybyday backup?',
+      ),
+      message: translateForLanguage(
+        currentLanguageId,
+        '恢复会替换这台电脑上的本地待办、日程、学期课程和偏好设置。',
+      ),
+      detail: `${formatBackupOrigin(currentLanguageId, staged.metadata)}\n${formatRestoreSummary(currentLanguageId, staged.summary)}\n\n${translateForLanguage(
+        currentLanguageId,
+        '继续前会自动备份当前数据；如果恢复失败，Daybyday 会回滚到恢复前的数据。',
+      )}`,
+      buttons: [
+        translateForLanguage(currentLanguageId, '取消'),
+        translateForLanguage(currentLanguageId, 'Restore Data'),
+      ],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  } catch (error) {
+    removeDatabaseBundle(staged.databasePath);
+    throw error;
+  }
+  if (confirmation.response !== 1) {
+    removeDatabaseBundle(staged.databasePath);
+    return { cancelled: true, restored: false };
+  }
+
+  const userDataPath = app.getPath('userData');
+  const recoveryDirectory = path.join(userDataPath, 'recovery');
+  try {
+    fs.mkdirSync(recoveryDirectory, { recursive: true });
+  } catch {
+    removeDatabaseBundle(staged.databasePath);
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '无法创建恢复前安全备份；现有数据没有更改。',
+      ),
+    );
+  }
+  const recoveryName = `Daybyday-pre-restore-${localTimeStamp(new Date())}-${operationId.slice(0, 8)}.ddb`;
+  const recoveryPath = path.join(recoveryDirectory, recoveryName);
+  try {
+    await writeBackupFile(recoveryPath, { allowInsideUserData: true });
+  } catch (error) {
+    console.error(
+      'Could not create the pre-restore safety backup.',
+      getErrorKind(error),
+    );
+    removeDatabaseBundle(staged.databasePath);
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '无法创建恢复前安全备份；现有数据没有更改。',
+      ),
+    );
+  }
+
+  let oldWindowStateBytes: Buffer;
+  let oldStartupEnabled: boolean;
+  try {
+    oldWindowStateBytes = getWindowStateBytes();
+    oldStartupEnabled = isWindowsStartupAvailable()
+      ? readWindowsStartupEnabled()
+      : currentLaunchAtStartup;
+  } catch (error) {
+    removeDatabaseBundle(staged.databasePath);
+    console.error(
+      'Could not read state before a Daybyday restore.',
+      getErrorKind(error),
+    );
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '无法读取当前偏好设置；现有数据未更改，恢复前安全备份已保留。',
+      ),
+    );
+  }
+  const rollbackDatabaseName = `.daybyday-restore-rollback-${operationId}.sqlite`;
+  const stagedDatabaseName = `.daybyday-restore-staging-${operationId}.sqlite`;
+  const rollbackDatabasePath = path.join(userDataPath, rollbackDatabaseName);
+  const stagedDatabasePath = path.join(userDataPath, stagedDatabaseName);
+  const journalPath = path.join(userDataPath, RESTORE_JOURNAL_FILE);
+  const hadWindowState = fs.existsSync(getStatePath());
+  const journal: RestoreJournal = {
+    version: 1,
+    phase: 'prepared',
+    id: operationId,
+    rollbackDatabaseName,
+    stagedDatabaseName,
+    hadWindowState,
+    oldWindowStateBase64: hadWindowState
+      ? oldWindowStateBytes.toString('base64')
+      : '',
+    oldStartupEnabled,
+  };
+  const previousState = readWindowState();
+  let replacementCommitted = false;
+
+  try {
+    writeFileAtomically(
+      journalPath,
+      Buffer.from(JSON.stringify(journal), 'utf8'),
+    );
+    plannerDatabase?.close();
+    plannerDatabase = undefined;
+    moveDatabaseBundle(getDatabasePath(), rollbackDatabasePath);
+    journal.phase = 'old-moved';
+    writeFileAtomically(
+      journalPath,
+      Buffer.from(JSON.stringify(journal), 'utf8'),
+    );
+    moveDatabaseBundle(stagedDatabasePath, getDatabasePath());
+    journal.phase = 'new-moved';
+    writeFileAtomically(
+      journalPath,
+      Buffer.from(JSON.stringify(journal), 'utf8'),
+    );
+
+    const restoredDatabase = new PlannerDatabase(
+      getDatabasePath(),
+      getSqliteDatabaseConstructor(),
+    );
+    plannerDatabase = restoredDatabase;
+    const integrity = restoredDatabase.getIntegrityCheck();
+    if (
+      integrity.integrity.length !== 1 ||
+      integrity.integrity[0] !== 'ok' ||
+      integrity.foreignKeyViolations !== 0
+    )
+      throw new Error('恢复后的数据库完整性检查未通过。');
+
+    const restoredPreferences = staged.preferences;
+    if (isWindowsStartupAvailable())
+      currentLaunchAtStartup = applyStartupSetting(
+        restoredPreferences.launchAtStartup,
+      );
+    else currentLaunchAtStartup = false;
+    currentCloseToTray = restoredPreferences.closeToTray;
+    currentFontSizeScale = restoredPreferences.fontSizeScale;
+    currentThemeId = restoredPreferences.themeId;
+    currentLanguageId = restoredPreferences.languageId;
+    const restoredBounds = getInitialBounds(restoredPreferences);
+    window.setBounds(restoredBounds, false);
+    window.setAlwaysOnTop(restoredPreferences.alwaysOnTop);
+    window.setBackgroundColor(getThemeDefinition(currentThemeId).background);
+    if (!saveWindowState()) throw new Error('恢复后的偏好设置未能写入本机。');
+
+    fs.unlinkSync(journalPath);
+    replacementCommitted = true;
+    removeDatabaseBundle(rollbackDatabasePath);
+    const preferences = {
+      themeId: currentThemeId,
+      languageId: currentLanguageId,
+      fontSizeScale: currentFontSizeScale,
+    };
+    try {
+      refreshTrayMenu();
+      for (const openWindow of BrowserWindow.getAllWindows()) {
+        if (openWindow.isDestroyed()) continue;
+        openWindow.webContents.send(
+          'settings:preferences-changed',
+          preferences,
+        );
+        openWindow.webContents.send('data:restored');
+      }
+    } catch (error) {
+      console.error(
+        'Could not refresh the Daybyday window after restore.',
+        getErrorKind(error),
+      );
+    }
+    return {
+      cancelled: false,
+      restored: true,
+      recoveryPath,
+      counts: staged.summary,
+    };
+  } catch (error) {
+    console.error(
+      'Could not complete a Daybyday data restore.',
+      getErrorKind(error),
+    );
+    try {
+      if (replacementCommitted) {
+        throw new Error('恢复操作已提交，未启动回滚流程。');
+      }
+      plannerDatabase?.close();
+      plannerDatabase = undefined;
+      if (fs.existsSync(journalPath)) recoverPendingRestore();
+      else if (fs.existsSync(rollbackDatabasePath)) {
+        if (fs.existsSync(getDatabasePath())) {
+          const rejectedPath = path.join(
+            userDataPath,
+            `.daybyday-restore-incomplete-${randomUUID()}.sqlite`,
+          );
+          moveDatabaseBundle(getDatabasePath(), rejectedPath);
+          removeDatabaseBundle(rejectedPath);
+        }
+        moveDatabaseBundle(rollbackDatabasePath, getDatabasePath());
+        restoreWindowStateBytes(hadWindowState, oldWindowStateBytes);
+      }
+      currentFontSizeScale = previousState.fontSizeScale;
+      currentThemeId = previousState.themeId;
+      currentLanguageId = previousState.languageId;
+      currentCloseToTray = previousState.closeToTray;
+      currentLaunchAtStartup = oldStartupEnabled;
+      if (isWindowsStartupAvailable()) applyStartupSetting(oldStartupEnabled);
+      window.setBounds(getInitialBounds(previousState), false);
+      window.setAlwaysOnTop(previousState.alwaysOnTop);
+      window.setBackgroundColor(
+        getThemeDefinition(previousState.themeId).background,
+      );
+      plannerDatabase = new PlannerDatabase(
+        getDatabasePath(),
+        getSqliteDatabaseConstructor(),
+      );
+      refreshTrayMenu();
+    } catch (rollbackError) {
+      console.error(
+        'Could not roll back the Daybyday restore.',
+        getErrorKind(rollbackError),
+      );
+      throw new Error(
+        translateForLanguage(
+          currentLanguageId,
+          '恢复失败，Daybyday 无法完成自动回滚；请保留 recovery 文件夹中的安全备份。',
+        ),
+      );
+    } finally {
+      removeDatabaseBundle(staged.databasePath);
+    }
+    throw new Error(
+      translateForLanguage(
+        currentLanguageId,
+        '恢复失败，已回滚到恢复前的数据；安全备份仍保存在 recovery 文件夹。',
+      ),
+    );
+  }
+};
+
 const registerWindowControls = () => {
   ipcMain.on('settings:get-initial-theme', (event: IpcMainEvent) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -521,6 +1397,46 @@ const registerWindowControls = () => {
   });
   ipcMain.handle('window:minimize', (event) => {
     getTrustedWindow(event).minimize();
+  });
+  ipcMain.handle('data:backup', async (event) => {
+    const window = getTrustedWindow(event);
+    if (dataOperationInProgress)
+      throw new Error(
+        translateForLanguage(
+          currentLanguageId,
+          '另一项数据操作正在进行，请稍后再试。',
+        ),
+      );
+    dataOperationInProgress = true;
+    try {
+      return await createUserBackup(window);
+    } finally {
+      dataOperationInProgress = false;
+      if (quitAfterDataOperation) {
+        quitAfterDataOperation = false;
+        app.quit();
+      }
+    }
+  });
+  ipcMain.handle('data:restore', async (event) => {
+    const window = getTrustedWindow(event);
+    if (dataOperationInProgress)
+      throw new Error(
+        translateForLanguage(
+          currentLanguageId,
+          '另一项数据操作正在进行，请稍后再试。',
+        ),
+      );
+    dataOperationInProgress = true;
+    try {
+      return await restoreUserBackup(window);
+    } finally {
+      dataOperationInProgress = false;
+      if (quitAfterDataOperation) {
+        quitAfterDataOperation = false;
+        app.quit();
+      }
+    }
   });
   ipcMain.handle('window:close', (event) => {
     getTrustedWindow(event).close();
@@ -929,13 +1845,34 @@ const createWindow = () => {
 
 app.whenReady().then(() => {
   if (started || !hasSingleInstanceLock) return;
+  try {
+    currentLanguageId = readWindowState().languageId;
+    recoverPendingRestore();
+  } catch (error) {
+    console.error(
+      'An interrupted Daybyday restore could not be recovered.',
+      getErrorKind(error),
+    );
+    dialog.showErrorBox(
+      translateForLanguage(currentLanguageId, 'Daybyday 启动恢复失败'),
+      translateForLanguage(
+        currentLanguageId,
+        '检测到未完成的数据恢复。为保护原有文件，Daybyday 暂未打开数据库。请勿删除用户数据目录中的 recovery 文件。',
+      ),
+    );
+    app.quit();
+    return;
+  }
   registerOcrProtocol();
   registerWindowControls();
   createWindow();
   try {
     createTray();
   } catch (error) {
-    console.error('Could not create the Daybyday system tray icon.', error);
+    console.error(
+      'Could not create the Daybyday system tray icon.',
+      getErrorKind(error),
+    );
   }
 
   screen.on('display-metrics-changed', keepWindowVisible);
@@ -957,7 +1894,12 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (dataOperationInProgress) {
+    event.preventDefault();
+    quitAfterDataOperation = true;
+    return;
+  }
   isQuitting = true;
   if (saveTimer) {
     clearTimeout(saveTimer);

@@ -114,7 +114,13 @@ SQLite 文件位于 Electron 的 `app.getPath('userData')` 目录。Windows 上�
 
 数据库迁移版本 2 在原有 `tasks` 和 `events` 表上新增 `semesters`、`courses`、`course_custom_weeks` 和 `course_exceptions`；版本 3 新增 `class_period_times` 学校节次模板表；版本 4 只新增 `import_batches` 和 `import_batch_items` 导入历史关联表，不会重建或清空原有待办、临时日程、课程或例外。课程实例不会复制进 `events` 表。版本 4 迁移是增量迁移；如果数据库版本不受支持或迁移失败，程序会提示错误并保留数据库文件。
 
-需要备份时，先关闭应用，再复制整个 `%APPDATA%\DayByDay` 文件夹到安全位置。不要删除该目录来排查问题；遇到数据库版本或初始化错误时，程序保留原文件并提示错误。
+### 备份与恢复（Phase 6B）
+
+在 **Settings → Data → Backup Data** 选择保存位置，会生成 `Daybyday-backup-YYYY-MM-DD.ddb`。备份使用 SQLite 在线备份接口生成一致快照，因此应用运行期间也能安全备份；文件包含完整 SQLite 数据库（待办、临时日程、学期、课程、调课例外、学校节次模板和导入记录）以及 `window-state.json` 中的主题、语言、字号、窗口和桌面偏好。文件带有格式版本、应用版本、创建时间、数据库版本、记录数量和 SHA-256 校验值。该 `.ddb` 是 Daybyday 的本地备份格式，不是压缩包；不会包含原始课程表截图。
+
+恢复时打开 **Settings → Data → Restore Data**，选择 `.ddb` 文件。应用会先检查文件校验、SQLite 完整性、外键及版本兼容性，再显示备份时间和记录数量供确认。确认后会先在 `%APPDATA%\DayByDay\recovery` 自动备份当前数据，再恢复数据库和偏好设置。恢复成功后页面会重新读取数据；如果切换或检查失败，程序会回滚。若在恢复期间应用异常退出，下次启动会先尝试恢复原数据库。建议把手动备份另存到外接硬盘或其他安全位置；应用不会上传备份。
+
+不要通过删除 `%APPDATA%\DayByDay` 来排查问题，也不要在应用运行时手工替换 `daybyday.sqlite`。遇到数据库版本、权限、磁盘空间或完整性错误时，程序会保留原文件并提示问题。
 
 ## 检查
 

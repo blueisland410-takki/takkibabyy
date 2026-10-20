@@ -34,7 +34,7 @@ import {
 import { analyzeCourseImport as analyzeCourseImportRows } from './courseImport';
 import { assertDateKey } from './validation';
 
-const SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export type SqliteDatabaseConstructor = typeof Database;
 
@@ -197,6 +197,44 @@ export class PlannerDatabase {
 
   close() {
     this.database.close();
+  }
+
+  backupTo(destinationPath: string): Promise<void> {
+    return this.database.backup(destinationPath).then(() => undefined);
+  }
+
+  getSchemaVersion(): number {
+    return this.database.pragma('user_version', { simple: true }) as number;
+  }
+
+  getIntegrityCheck(): { integrity: string[]; foreignKeyViolations: number } {
+    const integrityRows = this.database.pragma('integrity_check') as Array<{
+      integrity_check: string;
+    }>;
+    const foreignKeyRows = this.database.pragma(
+      'foreign_key_check',
+    ) as unknown[];
+    return {
+      integrity: integrityRows.map((row) => row.integrity_check),
+      foreignKeyViolations: foreignKeyRows.length,
+    };
+  }
+
+  getBackupRecordCounts() {
+    const countRows = (tableName: string) =>
+      this.database
+        .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+        .get() as {
+        count: number;
+      };
+    return {
+      tasks: countRows('tasks').count,
+      events: countRows('events').count,
+      semesters: countRows('semesters').count,
+      courses: countRows('courses').count,
+      courseExceptions: countRows('course_exceptions').count,
+      importBatches: countRows('import_batches').count,
+    };
   }
 
   listSemesters(): Semester[] {
@@ -1140,7 +1178,7 @@ export class PlannerDatabase {
     let version = Number(
       this.database.pragma('user_version', { simple: true }),
     );
-    if (version > SCHEMA_VERSION) {
+    if (version > CURRENT_SCHEMA_VERSION) {
       throw new Error(
         `数据库版本 ${version} 高于当前软件支持的版本，数据未被修改。`,
       );
@@ -1292,7 +1330,7 @@ export class PlannerDatabase {
         .immediate();
       version = 4;
     }
-    if (version !== SCHEMA_VERSION)
+    if (version !== CURRENT_SCHEMA_VERSION)
       throw new Error(`不支持的数据库版本 ${version}，数据未被修改。`);
   }
 

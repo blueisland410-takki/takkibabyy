@@ -90,6 +90,17 @@ export type DesktopSettings = {
   startupAvailable: boolean;
 };
 
+export type BackupOperationResult = {
+  cancelled: boolean;
+  filePath?: string;
+};
+
+export type RestoreOperationResult = {
+  cancelled: boolean;
+  restored: boolean;
+  recoveryPath?: string;
+};
+
 export type Course = {
   id: string;
   semesterId: string;

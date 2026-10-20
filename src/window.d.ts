@@ -1,5 +1,6 @@
 import type {
   Course,
+  BackupOperationResult,
   CourseExceptionInput,
   DesktopSettings,
   CourseImportAnalysis,
@@ -28,6 +29,7 @@ import type {
   Task,
   TaskInput,
   TaskUpdate,
+  RestoreOperationResult,
 } from './domain';
 
 export {};
@@ -41,6 +43,9 @@ declare global {
       toggleAlwaysOnTop: () => Promise<boolean>;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      backupData: () => Promise<BackupOperationResult>;
+      restoreData: () => Promise<RestoreOperationResult>;
+      onDataRestored: (callback: () => void) => () => void;
       getDesktopSettings: () => Promise<DesktopSettings>;
       setCloseToTray: (enabled: boolean) => Promise<boolean>;
       setLaunchAtStartup: (enabled: boolean) => Promise<DesktopSettings>;

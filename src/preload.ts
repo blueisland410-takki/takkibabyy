@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  BackupOperationResult,
   Course,
   CourseExceptionInput,
   DesktopSettings,
@@ -29,6 +30,7 @@ import type {
   Task,
   TaskInput,
   TaskUpdate,
+  RestoreOperationResult,
 } from './domain';
 import {
   assertDateKey,
@@ -67,6 +69,48 @@ contextBridge.exposeInMainWorld('dayByDay', {
     ipcRenderer.invoke('window:toggle-always-on-top'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  backupData: async (): Promise<BackupOperationResult> => {
+    const value: unknown = await ipcRenderer.invoke('data:backup');
+    if (!value || typeof value !== 'object')
+      throw new Error('备份操作结果无效。');
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.cancelled !== 'boolean' ||
+      (record.filePath !== undefined && typeof record.filePath !== 'string')
+    )
+      throw new Error('备份操作结果无效。');
+    return {
+      cancelled: record.cancelled,
+      ...(typeof record.filePath === 'string'
+        ? { filePath: record.filePath }
+        : {}),
+    };
+  },
+  restoreData: async (): Promise<RestoreOperationResult> => {
+    const value: unknown = await ipcRenderer.invoke('data:restore');
+    if (!value || typeof value !== 'object')
+      throw new Error('恢复操作结果无效。');
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.cancelled !== 'boolean' ||
+      typeof record.restored !== 'boolean' ||
+      (record.recoveryPath !== undefined &&
+        typeof record.recoveryPath !== 'string')
+    )
+      throw new Error('恢复操作结果无效。');
+    return {
+      cancelled: record.cancelled,
+      restored: record.restored,
+      ...(typeof record.recoveryPath === 'string'
+        ? { recoveryPath: record.recoveryPath }
+        : {}),
+    };
+  },
+  onDataRestored: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('data:restored', listener);
+    return () => ipcRenderer.removeListener('data:restored', listener);
+  },
   getDesktopSettings: (): Promise<DesktopSettings> =>
     ipcRenderer.invoke('settings:get-desktop'),
   setCloseToTray: (enabled: boolean): Promise<boolean> => {
