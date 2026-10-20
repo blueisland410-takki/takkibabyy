@@ -163,3 +163,11 @@ Daybyday-backup-*.zip
 *.pfx
 *.pem
 *.key
+
+# Keep real timetable screenshots out of the repository. Synthetic fixtures
+# used by automated tests live in tests/fixtures/synthetic-standard-timetable.png.
+tests/fixtures/mobile-timetable/*.png
+tests/fixtures/mobile-timetable/*.jpg
+tests/fixtures/mobile-timetable/*.jpeg
+personal-timetable-screenshots/
+private-timetable-screenshots/
