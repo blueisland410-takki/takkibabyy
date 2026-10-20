@@ -122,7 +122,12 @@ test('ICS single timed and all-day events retain title, location, description an
   );
   assert.equal(timed.classroom, '实验楼 A405');
   assert.match(timed.notes, /学生证/);
-  assert.ok(timed.warnings.some((warning) => warning.includes('来源时区')));
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  assert.equal(
+    timed.warnings.some((warning) => warning.includes('来源时区')),
+    localTimeZone !== 'UTC',
+    'an explicit UTC source timezone only needs a warning when it differs from the runner timezone',
+  );
   assert.equal(allDay.isAllDay, true);
   assert.equal(allDay.eventDate, '2026-10-01');
   assert.equal(allDay.startTime, null);
