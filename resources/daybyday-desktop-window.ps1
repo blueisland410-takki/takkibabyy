@@ -49,6 +49,34 @@ public static class DaybydayDesktopWindowNative
     private static extern IntPtr GetParent(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool AttachThreadInput(uint attachThreadId, uint attachToThreadId, bool attach);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool IsChild(IntPtr parent, IntPtr child);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public int caretLeft;
+        public int caretTop;
+        public int caretRight;
+        public int caretBottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
@@ -83,6 +111,43 @@ public static class DaybydayDesktopWindowNative
     {
         if (IntPtr.Size == 8) SetWindowLongPtr64(hwnd, (int)GWL_STYLE, new IntPtr(style));
         else SetWindowLong32(hwnd, (int)GWL_STYLE, unchecked((int)style));
+    }
+
+    public static string SetKeyboardFocus(IntPtr hwnd, int ownerProcessId, out uint sourceThreadId, out uint targetThreadId, out bool attached)
+    {
+        sourceThreadId = GetCurrentThreadId();
+        targetThreadId = 0;
+        attached = false;
+        if (!IsWindow(hwnd)) return "focus-window-missing";
+
+        uint actualOwnerProcessId;
+        targetThreadId = GetWindowThreadProcessId(hwnd, out actualOwnerProcessId);
+        if (actualOwnerProcessId != unchecked((uint)ownerProcessId) || targetThreadId == 0)
+            return "focus-owner-mismatch";
+
+        attached = sourceThreadId == targetThreadId || AttachThreadInput(sourceThreadId, targetThreadId, true);
+        if (!attached) return "focus-attach-failed";
+
+        return VerifyKeyboardFocus(hwnd, targetThreadId);
+    }
+
+    public static string VerifyKeyboardFocus(IntPtr hwnd, uint targetThreadId)
+    {
+        if (!IsWindow(hwnd) || targetThreadId == 0) return "focus-window-missing";
+        SetFocus(hwnd);
+        var info = new GuiThreadInfo();
+        info.cbSize = Marshal.SizeOf(typeof(GuiThreadInfo));
+        if (!GetGUIThreadInfo(targetThreadId, ref info)) return "focus-unverified";
+        return info.hwndFocus == hwnd || IsChild(hwnd, info.hwndFocus)
+            ? "focus-attached"
+            : "focus-unverified";
+    }
+
+    public static bool ReleaseKeyboardFocus(uint sourceThreadId, uint targetThreadId)
+    {
+        if (sourceThreadId == 0 || targetThreadId == 0 || sourceThreadId == targetThreadId)
+            return true;
+        return AttachThreadInput(sourceThreadId, targetThreadId, false);
     }
 
     private static bool FindDesktop(out IntPtr progman)
@@ -196,6 +261,50 @@ if ($Handle -notmatch '^0x[0-9A-Fa-f]{1,16}$') {
   exit 2
 }
 
+$script:keyboardFocusAttached = $false
+$script:keyboardFocusSourceThreadId = [uint32]0
+$script:keyboardFocusTargetThreadId = [uint32]0
+
+function Release-DesktopKeyboardFocus {
+  if (-not $script:keyboardFocusAttached) { return 'focus-released' }
+  $released = [DaybydayDesktopWindowNative]::ReleaseKeyboardFocus(
+    $script:keyboardFocusSourceThreadId,
+    $script:keyboardFocusTargetThreadId
+  )
+  if ($released) {
+    $script:keyboardFocusAttached = $false
+    $script:keyboardFocusSourceThreadId = [uint32]0
+    $script:keyboardFocusTargetThreadId = [uint32]0
+    return 'focus-released'
+  }
+  return 'focus-release-failed'
+}
+
+function Set-DesktopKeyboardFocus {
+  if ($script:keyboardFocusAttached) {
+    return [DaybydayDesktopWindowNative]::VerifyKeyboardFocus(
+      $windowHandle,
+      $script:keyboardFocusTargetThreadId
+    )
+  }
+  $sourceThreadId = [uint32]0
+  $targetThreadId = [uint32]0
+  $attached = $false
+  $status = [DaybydayDesktopWindowNative]::SetKeyboardFocus(
+    $windowHandle,
+    $OwnerProcessId,
+    [ref]$sourceThreadId,
+    [ref]$targetThreadId,
+    [ref]$attached
+  )
+  if ($attached) {
+    $script:keyboardFocusAttached = $true
+    $script:keyboardFocusSourceThreadId = $sourceThreadId
+    $script:keyboardFocusTargetThreadId = $targetThreadId
+  }
+  return $status
+}
+
 if ($Mode -eq 'Detach') {
   $detachCode = [DaybydayDesktopWindowNative]::Detach($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
   Write-Status $detachCode
@@ -209,72 +318,96 @@ if ($status -ne 'attached') { exit 2 }
 
 # A bounded poll repairs the parent when Explorer restarts. It never sends
 # private shell messages, edits the registry, or terminates Explorer.
-$readCommand = [System.Threading.Tasks.Task[string]]::Factory.StartNew([Func[string]]{ [Console]::In.ReadLine() })
+# ReadLineAsync keeps the same PowerShell thread available for SetFocus while
+# still allowing bounds and focus commands to arrive over the stdin pipe.
+$stdinReader = [System.IO.StreamReader]::new([Console]::OpenStandardInput())
+$readCommand = $stdinReader.ReadLineAsync()
 $lastStatus = $status
 $desktopUnavailableSince = $null
-while ($true) {
-  if ($readCommand.IsCompleted) {
-    $line = $readCommand.Result
-    if ($null -eq $line) { break }
-    try { $command = $line | ConvertFrom-Json } catch { $command = $null }
-    if ($command -and $command.command -eq 'stop') { break }
-    if ($command -and $command.command -eq 'detach') {
-      $nextX = 0
-      $nextY = 0
-      $nextWidth = 0
-      $nextHeight = 0
-      $validBounds =
-        [int]::TryParse([string]$command.x, [ref]$nextX) -and
-        [int]::TryParse([string]$command.y, [ref]$nextY) -and
-        [int]::TryParse([string]$command.width, [ref]$nextWidth) -and
-        [int]::TryParse([string]$command.height, [ref]$nextHeight) -and
-        $nextWidth -ge 320 -and $nextHeight -ge 420 -and
-        $nextWidth -le 16384 -and $nextHeight -le 16384
-      if ($validBounds) {
-        $X = $nextX
-        $Y = $nextY
-        $Width = $nextWidth
-        $Height = $nextHeight
+$helperExitCode = 0
+try {
+  while ($true) {
+    if ($readCommand.IsCompleted) {
+      $line = $readCommand.Result
+      if ($null -eq $line) { break }
+      try { $command = $line | ConvertFrom-Json } catch { $command = $null }
+      if ($command -and $command.command -eq 'stop') { break }
+      if ($command -and $command.command -eq 'focus') {
+        $focusStatus = Set-DesktopKeyboardFocus
+        if ($focusStatus -eq 'focus-attached') {
+          Write-Status 'focus-attached'
+        } else {
+          Write-Status 'focus-error'
+        }
       }
-      $detachCode = [DaybydayDesktopWindowNative]::Detach($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
-      Write-Status $detachCode
-      break
-    }
-    if ($command -and $command.command -eq 'bounds') {
-      $nextX = 0
-      $nextY = 0
-      $nextWidth = 0
-      $nextHeight = 0
-      $validBounds =
-        [int]::TryParse([string]$command.x, [ref]$nextX) -and
-        [int]::TryParse([string]$command.y, [ref]$nextY) -and
-        [int]::TryParse([string]$command.width, [ref]$nextWidth) -and
-        [int]::TryParse([string]$command.height, [ref]$nextHeight) -and
-        $nextWidth -ge 320 -and $nextHeight -ge 420 -and
-        $nextWidth -le 16384 -and $nextHeight -le 16384
-      if ($validBounds) {
-        $X = $nextX
-        $Y = $nextY
-        $Width = $nextWidth
-        $Height = $nextHeight
+      if ($command -and $command.command -eq 'blur') {
+        $focusStatus = Release-DesktopKeyboardFocus
+        if ($focusStatus -eq 'focus-release-failed') { Write-Status 'focus-error' }
       }
+      if ($command -and $command.command -eq 'detach') {
+        [void](Release-DesktopKeyboardFocus)
+        $nextX = 0
+        $nextY = 0
+        $nextWidth = 0
+        $nextHeight = 0
+        $validBounds =
+          [int]::TryParse([string]$command.x, [ref]$nextX) -and
+          [int]::TryParse([string]$command.y, [ref]$nextY) -and
+          [int]::TryParse([string]$command.width, [ref]$nextWidth) -and
+          [int]::TryParse([string]$command.height, [ref]$nextHeight) -and
+          $nextWidth -ge 320 -and $nextHeight -ge 420 -and
+          $nextWidth -le 16384 -and $nextHeight -le 16384
+        if ($validBounds) {
+          $X = $nextX
+          $Y = $nextY
+          $Width = $nextWidth
+          $Height = $nextHeight
+        }
+        $detachCode = [DaybydayDesktopWindowNative]::Detach($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
+        Write-Status $detachCode
+        break
+      }
+      if ($command -and $command.command -eq 'bounds') {
+        $nextX = 0
+        $nextY = 0
+        $nextWidth = 0
+        $nextHeight = 0
+        $validBounds =
+          [int]::TryParse([string]$command.x, [ref]$nextX) -and
+          [int]::TryParse([string]$command.y, [ref]$nextY) -and
+          [int]::TryParse([string]$command.width, [ref]$nextWidth) -and
+          [int]::TryParse([string]$command.height, [ref]$nextHeight) -and
+          $nextWidth -ge 320 -and $nextHeight -ge 420 -and
+          $nextWidth -le 16384 -and $nextHeight -le 16384
+        if ($validBounds) {
+          $X = $nextX
+          $Y = $nextY
+          $Width = $nextWidth
+          $Height = $nextHeight
+        }
+      }
+      $readCommand = $stdinReader.ReadLineAsync()
     }
-    $readCommand = [System.Threading.Tasks.Task[string]]::Factory.StartNew([Func[string]]{ [Console]::In.ReadLine() })
-  }
-  Start-Sleep -Milliseconds 1800
-  $status = [DaybydayDesktopWindowNative]::EnsureAttached($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
-  if ($status -eq 'desktop-unavailable') {
-    if ($null -eq $desktopUnavailableSince) { $desktopUnavailableSince = [DateTime]::UtcNow }
-    if (([DateTime]::UtcNow - $desktopUnavailableSince).TotalSeconds -ge 20) {
-      Write-Status 'desktop-timeout'
-      exit 2
+    Start-Sleep -Milliseconds 1800
+    $status = [DaybydayDesktopWindowNative]::EnsureAttached($windowHandle, $OwnerProcessId, $X, $Y, $Width, $Height)
+    if ($status -eq 'desktop-unavailable') {
+      if ($null -eq $desktopUnavailableSince) { $desktopUnavailableSince = [DateTime]::UtcNow }
+      if (([DateTime]::UtcNow - $desktopUnavailableSince).TotalSeconds -ge 20) {
+        Write-Status 'desktop-timeout'
+        $helperExitCode = 2
+        break
+      }
+    } else {
+      $desktopUnavailableSince = $null
     }
-  } else {
-    $desktopUnavailableSince = $null
+    if ($status -ne $lastStatus) {
+      Write-Status $status
+      $lastStatus = $status
+    }
+    if ($status -eq 'window-missing' -or $status -eq 'window-owner-mismatch') { break }
   }
-  if ($status -ne $lastStatus) {
-    Write-Status $status
-    $lastStatus = $status
-  }
-  if ($status -eq 'window-missing' -or $status -eq 'window-owner-mismatch') { break }
+} finally {
+  [void](Release-DesktopKeyboardFocus)
+  $stdinReader.Dispose()
 }
+if ($helperExitCode -ne 0) { exit $helperExitCode }

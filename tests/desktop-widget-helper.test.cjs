@@ -10,6 +10,9 @@ const helperPath = path.join(
   'resources',
   'daybyday-desktop-window.ps1',
 );
+const mainPath = path.join(projectRoot, 'src', 'main.ts');
+const preloadPath = path.join(projectRoot, 'src', 'preload.ts');
+const appPath = path.join(projectRoot, 'src', 'App.tsx');
 
 test(
   'Windows desktop helper compiles and safely rejects a missing test window',
@@ -61,8 +64,35 @@ test('desktop helper uses a fixed command set without registry or Explorer resta
   assert.match(source, /WS_CHILD/);
   assert.match(source, /SetParent\(hwnd, progman\)/);
   assert.match(source, /EnsureAttached/);
+  assert.match(source, /ReadLineAsync\(\)/);
+  assert.match(
+    source,
+    /AttachThreadInput\(sourceThreadId, targetThreadId, true\)/,
+  );
+  assert.match(source, /SetFocus\(hwnd\)/);
+  assert.match(source, /ReleaseKeyboardFocus/);
+  assert.ok(source.includes("command -eq 'focus'"));
+  assert.ok(source.includes("command -eq 'blur'"));
   assert.doesNotMatch(
     source,
     /RegistryKey|Set-ItemProperty|Stop-Process|taskkill/i,
   );
+});
+
+test('keyboard focus IPC is restricted to the main frame and Desktop Widget mode', () => {
+  const mainSource = fs.readFileSync(mainPath, 'utf8');
+  const preloadSource = fs.readFileSync(preloadPath, 'utf8');
+  const appSource = fs.readFileSync(appPath, 'utf8');
+
+  assert.match(mainSource, /currentWindowMode !== 'desktop-widget'/);
+  assert.match(mainSource, /ipcMain\.on\('desktop-widget:input-focus'/);
+  assert.match(mainSource, /event\.senderFrame !== event\.sender\.mainFrame/);
+  assert.match(
+    preloadSource,
+    /setDesktopWidgetTextFocus: \(focused: boolean\)/,
+  );
+  assert.match(preloadSource, /typeof focused !== 'boolean'/);
+  assert.match(appSource, /document\.addEventListener\('focusin'/);
+  assert.match(appSource, /document\.addEventListener\('focusout'/);
+  assert.match(appSource, /onDesktopWidgetFocusError/);
 });

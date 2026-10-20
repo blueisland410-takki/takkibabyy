@@ -392,6 +392,23 @@ const sendDesktopWidgetBounds = () => {
   }
 };
 
+const sendDesktopWidgetTextFocus = (focused: boolean) => {
+  if (
+    process.platform !== 'win32' ||
+    currentWindowMode !== 'desktop-widget' ||
+    !desktopWidgetHelper ||
+    desktopWidgetHelper.killed
+  )
+    return;
+  try {
+    desktopWidgetHelper.stdin.write(
+      `${JSON.stringify({ command: focused ? 'focus' : 'blur' })}\n`,
+    );
+  } catch {
+    // The helper exit handler will recover its desktop attachment.
+  }
+};
+
 const parseDesktopWidgetHelperLine = (line: string) => {
   try {
     const value: unknown = JSON.parse(line);
@@ -456,6 +473,25 @@ const startDesktopWidgetHelper = (window: BrowserWindow) =>
             settled = true;
             reject(new Error(code));
           }
+          continue;
+        }
+        if (code === 'focus-attached') {
+          if (
+            currentWindowModeErrorKey ===
+            '桌面便签输入框无法获得键盘焦点，请切换到普通悬浮窗后重试。'
+          ) {
+            currentWindowModeErrorKey = undefined;
+            broadcastWindowModeState();
+          }
+          continue;
+        }
+        if (code === 'focus-released') continue;
+        if (code === 'focus-error' || code === 'focus-release-failed') {
+          currentWindowModeErrorKey =
+            '桌面便签输入框无法获得键盘焦点，请切换到普通悬浮窗后重试。';
+          broadcastWindowModeState();
+          if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('desktop-widget:focus-error');
           continue;
         }
         if (code === lastStatus) continue;
@@ -1798,6 +1834,17 @@ const registerWindowControls = () => {
   ipcMain.handle('window:set-mode', async (event, mode: unknown) => {
     const window = getTrustedWindow(event);
     return applyWindowMode(window, parseWindowMode(mode));
+  });
+  ipcMain.on('desktop-widget:input-focus', (event, focused: unknown) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (
+      !mainWindow ||
+      senderWindow !== mainWindow ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof focused !== 'boolean'
+    )
+      return;
+    sendDesktopWidgetTextFocus(focused);
   });
   ipcMain.handle('window:minimize', (event) => {
     const window = getTrustedWindow(event);

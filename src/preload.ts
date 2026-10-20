@@ -71,6 +71,7 @@ const WINDOW_MODE_ERROR_KEYS = new Set([
   '桌面便签恢复失败，已切回普通悬浮窗。',
   '窗口模式已切换，但设置未能保存到本机。',
   '窗口模式设置失败，请重试。',
+  '桌面便签输入框无法获得键盘焦点，请切换到普通悬浮窗后重试。',
 ]);
 
 const parseWindowModeState = (value: unknown): WindowModeState => {
@@ -118,6 +119,16 @@ contextBridge.exposeInMainWorld('dayByDay', {
     };
     ipcRenderer.on('window:mode-changed', listener);
     return () => ipcRenderer.removeListener('window:mode-changed', listener);
+  },
+  setDesktopWidgetTextFocus: (focused: boolean): void => {
+    if (typeof focused !== 'boolean') return;
+    ipcRenderer.send('desktop-widget:input-focus', focused);
+  },
+  onDesktopWidgetFocusError: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('desktop-widget:focus-error', listener);
+    return () =>
+      ipcRenderer.removeListener('desktop-widget:focus-error', listener);
   },
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),

@@ -133,6 +133,12 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\desktop-w
 
 桌面层挂接会改变窗口的 Win32 父子关系。微软文档指出，跨进程 `SetParent` 在 Windows 10 1703 及之后可能重置子窗口所属进程的 DPI 感知；Electron 官方 BrowserWindow API 没有将普通 BrowserWindow 直接设置为 Explorer 桌面子窗口的公开接口。因此此模式明确标记为实验功能，可能影响高 DPI 缩放；若布局异常，请切回 Floating Window 并重启应用。[Microsoft SetParent 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)、[Electron BrowserWindow 文档](https://www.electronjs.org/docs/latest/api/browser-window)。目前的环境中 Electron 44.9.0 未能显示应用窗口，所以真实 BrowserWindow 挂接、运行时自动恢复和 DPI 行为尚未完成验收。用户确认通过的是独立 WinForms 探针；这不代表 Explorer 重启、多显示器、Windows 10/11 和高 DPI 均已验证。
 
+### Desktop Widget 输入焦点修复（Phase 6.2）
+
+桌面子窗口不能像普通顶层窗口一样直接取得键盘焦点。桌面模式下，当文字输入框、文本区域、下拉框或可编辑区域获得焦点时，preload 只发送一个布尔焦点状态；主进程会验证 IPC 来自主窗口主 frame，并且当前模式确实是 Desktop Widget，然后通知随包的 PowerShell/Win32 辅助进程。辅助进程将自己的输入队列临时连接到 Electron HWND 所属线程，通过 `SetFocus` 设置并用 `GetGUIThreadInfo` 验证焦点。失焦、切换窗口模式、辅助进程退出时解除连接；失败时以当前应用语言提示切回 Floating Window。不会调用 `SetForegroundWindow`，也不保存输入内容。
+
+Microsoft 说明 `AttachThreadInput` 会重置按键状态，且要求两个线程位于同一桌面；因此连接仅在获得可编辑控件焦点后启用，并在离开后解除。此桥接已通过独立 Electron 探针的文字输入测试（用户确认成功），Windows PowerShell 自动测试也已编译更新后的 Win32 辅助代码。本次使用本地缓存的 Electron ZIP 完成 Forge package，并核对新包内桌面辅助脚本与源码哈希一致，且包含 Windows SQLite、中文和英文 OCR 资源。Squirrel make 已生成 NUPKG，但在 Squirrel 调用归档工具时因系统错误“无效的系统 DLL 重定位”失败，没有生成新的 Setup.exe。**这不等同于已验证 Daybyday 正式安装版**：正式安装版中键盘输入法、中文 IME、焦点切换和退出清理仍需在新安装包生成后验证。
+
 本检查点 Forge package 成功，输出目录中包含桌面辅助脚本。Squirrel `make` 的应用打包步骤成功，但生成安装器时被当前受限环境拒绝访问 `C:\Users\lan\AppData\Roaming\NuGet`，因此本检查点没有产出新的 Setup.exe；也没有尝试修改该用户目录权限。
 
 ### macOS 构建与平台边界（Phase 6.1D）

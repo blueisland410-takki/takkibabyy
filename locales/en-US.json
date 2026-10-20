@@ -372,5 +372,6 @@
   "桌面便签恢复失败，已切回普通悬浮窗。": "Could not restore the desktop widget. The window returned to Floating Window.",
   "窗口模式已切换，但设置未能保存到本机。": "The window mode changed, but the setting could not be saved locally.",
   "窗口模式设置失败，请重试。": "Could not change the window mode. Please try again.",
+  "桌面便签输入框无法获得键盘焦点，请切换到普通悬浮窗后重试。": "The desktop widget input could not receive keyboard focus. Switch to Floating Window and try again.",
   "实验功能：Windows 桌面挂接可能影响高 DPI 缩放；若异常，请切回普通悬浮窗并重启应用。": "Experimental: Windows desktop attachment may affect high-DPI scaling. If the layout looks wrong, switch back to Floating Window and restart the app."
 }

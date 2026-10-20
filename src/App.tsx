@@ -38,6 +38,18 @@ import './index.css';
 type Editor = { kind: 'task'; task?: Task } | { kind: 'event'; event?: Event };
 type ViewMode = 'day' | 'week' | 'planner' | 'settings';
 const weekdays = [0, 1, 2, 3, 4, 5, 6];
+const NON_KEYBOARD_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'file',
+  'hidden',
+  'image',
+  'radio',
+  'range',
+  'reset',
+  'submit',
+]);
 
 const localDateKey = (date: Date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -845,6 +857,47 @@ export function App() {
       .catch(() => setControlMessage('窗口设置暂时无法读取。'));
     return window.dayByDay.onWindowModeChanged(applyWindowModeState);
   }, []);
+
+  useEffect(() => {
+    const isKeyboardInput = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target.isContentEditable
+      )
+        return true;
+      if (!(target instanceof HTMLInputElement)) return false;
+      return !NON_KEYBOARD_INPUT_TYPES.has(target.type);
+    };
+    const syncFocus = () => {
+      window.dayByDay.setDesktopWidgetTextFocus(
+        windowMode === 'desktop-widget' &&
+          isKeyboardInput(document.activeElement),
+      );
+    };
+    const handleFocusOut = () => window.setTimeout(syncFocus, 0);
+    const handleWindowBlur = () =>
+      window.dayByDay.setDesktopWidgetTextFocus(false);
+    const handleWindowFocus = () => syncFocus();
+    document.addEventListener('focusin', syncFocus);
+    document.addEventListener('focusout', handleFocusOut);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    const unsubscribe = window.dayByDay.onDesktopWidgetFocusError(() =>
+      setControlMessage(
+        '桌面便签输入框无法获得键盘焦点，请切换到普通悬浮窗后重试。',
+      ),
+    );
+    return () => {
+      document.removeEventListener('focusin', syncFocus);
+      document.removeEventListener('focusout', handleFocusOut);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      unsubscribe();
+      window.dayByDay.setDesktopWidgetTextFocus(false);
+    };
+  }, [windowMode]);
 
   useEffect(() => {
     void window.dayByDay

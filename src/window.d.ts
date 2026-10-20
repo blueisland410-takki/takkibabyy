@@ -46,6 +46,8 @@ declare global {
       onWindowModeChanged: (
         callback: (state: WindowModeState) => void,
       ) => () => void;
+      setDesktopWidgetTextFocus: (focused: boolean) => void;
+      onDesktopWidgetFocusError: (callback: () => void) => () => void;
       minimizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
       backupData: () => Promise<BackupOperationResult>;
