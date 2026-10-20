@@ -149,3 +149,17 @@ out/
 .electron-cache/
 .electron-zip/
 .package-temp/
+
+# Local user data, backup exports, and signing credentials
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+Daybyday-backup-*.zip
+*.p12
+*.pfx
+*.pem
+*.key
